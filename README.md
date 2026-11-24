@@ -71,4 +71,4 @@ Lihat [CHANGELOG.md](CHANGELOG.md).
 
 ## Lisensi
 
-Proyek internal / privat. Belum ada lisensi terbuka.
+© 2026 **DeBeeR** — All rights reserved. Lihat [LICENSE](LICENSE).
