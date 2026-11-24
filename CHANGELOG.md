@@ -10,6 +10,7 @@
 - **server.js**: perbaiki path-traversal *prefix-match* (guard boundary case-insensitive + tolak `..`), bungkus `decodeURIComponent` (400 alih-alih crash), tambah depth cap 128, bind ke `127.0.0.1`.
 - **Rust (`wiztri-scan.exe`)**: perbaiki offset ukuran non-resident DATA (`0x2c`→`0x30`) — MFT >4 GiB akan terhitung salah/terpotong sebelumnya.
 - **Rust**: tambah guard anti-`panic` saat membaca atribut resident yang pendek/rusak (OOB), guard ukuran rekaman agar tak OOM pada geometri boot rusak, escape string error JSON.
+- **Rust**: emisi file tanpa kunci `children` (sama dgn backend Node) — sebelumnya file ikut `children:[]` sehingga tampil sebagai folder bisa-expand di UI mode MFT.
 - **CSP**: tambah meta Content-Security-Policy (sumber lokal saja) di renderer.
 
 ## 0.2.0 — 2026-11-24

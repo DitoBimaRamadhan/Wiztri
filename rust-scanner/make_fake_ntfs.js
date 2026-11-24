@@ -53,7 +53,7 @@ function fileRecord(frn, flags, parent, alloc, size, name) {
   return rec;
 }
 
-// rekaman 0 ($MFT) dengan DATA non-resident -> ukuran mft_bytes @0x2c
+// rekaman 0 ($MFT) dengan DATA non-resident -> ukuran mft_bytes @0x30 (dari awal attr)
 function mftRecord0(mftBytes) {
   const rec = Buffer.alloc(REC);
   rec.write('FILE', 0, 'latin1');
@@ -67,9 +67,9 @@ function mftRecord0(mftBytes) {
   u64(rec, 0x48, 0);               // lowestVCN
   u64(rec, 0x50, mftBytes / REC - 1); // highestVCN (clusters? VCN units; ok approx)
   u16(rec, 0x58, 0x40);            // mapping pairs offset
-  u64(rec, 0x5c, mftBytes);        // allocated
-  u64(rec, 0x64, mftBytes);        // real size
-  u64(rec, 0x6c, mftBytes);        // initialized
+  u64(rec, 0x60, mftBytes);        // allocated (attr+0x28)
+  u64(rec, 0x68, mftBytes);        // real size (attr+0x30)
+  u64(rec, 0x70, mftBytes);        // initialized (attr+0x38)
   rec[0x78] = 0;                   // mapping pairs: terminator (start of 0x40+0x38=0x78)
   flushAttr(rec, 0x38 + hlen);
   fixupSlot(rec);

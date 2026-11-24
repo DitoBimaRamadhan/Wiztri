@@ -165,10 +165,12 @@ fn emit_children(p: u64, by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
                 emit_children(n.frn, by_parent, nodes, mem, out, depth + 1);
                 out.push_str("]}");
             } else {
+                // file: tanpa kunci children (sama dgn backend Node) agar renderer
+                // bisa bedakan file vs folder kosong via Array.isArray(children)
                 out.push_str(&n.size.to_string());
                 out.push_str(",\"alloc\":");
                 out.push_str(&n.alloc.to_string());
-                out.push_str(",\"children\":[]}");
+                out.push_str("}");
             }
         }
     }
@@ -343,7 +345,7 @@ fn main() {
                 out.push_str(&n.size.to_string());
                 out.push_str(",\"alloc\":");
                 out.push_str(&n.alloc.to_string());
-                out.push_str(",\"children\":[]}");
+                out.push_str("}");
             }
         }
     }
