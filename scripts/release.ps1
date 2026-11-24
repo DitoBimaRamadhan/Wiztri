@@ -8,7 +8,8 @@ param(
   [string]$Repo = "DitoBimaRamadhan/Wiztri",
   [string]$Title = "Wiztri 0.2.0",
   [string]$Notes = "Rilis Wiztri 0.2.0. Unduh `wiztri setup.exe` (x64, Windows NTFS). Lihat CHANGELOG.md untuk detail.",
-  [string]$Asset = "installer/wiztri setup.exe"
+  [string]$Asset = "installer/wiztri setup.exe",
+  [string]$AssetName = "wiztri.setup.exe"
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,7 +42,7 @@ try {
 
 # Upload asset (libcurl dari PowerShell: pakai curl.exe bila ada)
 $uploadUrl = $existing.upload_url -replace '\{.*$',''
-$assetName = Split-Path $Asset -Leaf
+$assetName = $AssetName
 Write-Host "Upload '$assetName' ke release..."
 if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
   curl.exe -s -X POST -H "Authorization: Bearer $Token" `

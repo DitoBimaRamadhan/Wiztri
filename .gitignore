@@ -19,3 +19,6 @@ electron.zip
 # sistem
 Thumbs.db
 Desktop.ini
+
+# rahasia lokal (token API), jangan pernah di-commit
+.gh_token

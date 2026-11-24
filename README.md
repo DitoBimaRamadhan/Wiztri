@@ -78,11 +78,11 @@ Unduh installer Windows terbaru dari halaman rilis:
 - **cURL:**
 
   ```bash
-  curl -L -o "wiztri setup.exe" \
-    https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri%20setup.exe
+  curl -L -o wiztri.setup.exe \
+    https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri.setup.exe
   ```
 
-Asset: `wiztri setup.exe` (NSIS, Windows x64). Jalankan sebagai **Administrator** untuk mode scan MFT cepat.
+Asset: `wiztri.setup.exe` (NSIS, Windows x64). Jalankan sebagai **Administrator** untuk mode scan MFT cepat.
 
 ## Lisensi
 
