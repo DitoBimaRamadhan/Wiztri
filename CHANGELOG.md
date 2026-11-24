@@ -12,6 +12,8 @@
 - **Rust**: tambah guard anti-`panic` saat membaca atribut resident yang pendek/rusak (OOB), guard ukuran rekaman agar tak OOM pada geometri boot rusak, escape string error JSON.
 - **Rust**: emisi file tanpa kunci `children` (sama dgn backend Node) — sebelumnya file ikut `children:[]` sehingga tampil sebagai folder bisa-expand di UI mode MFT.
 - **CSP**: tambah meta Content-Security-Policy (sumber lokal saja) di renderer.
+### Pengujian
+- Tambah `test/` — smoke test otomatis: `smoke.js` (server web: scan API, traversal, decoding rusak), `electron-smoke.js` (app hidup), `electron-cdp.js` (renderer mount + preload + tombol), `electron-scan.js` (IPC scan end-to-end). Semua PASS.
 
 ## 0.2.0 — 2026-11-24
 ### Ditambahkan
