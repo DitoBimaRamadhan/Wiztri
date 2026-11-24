@@ -69,6 +69,21 @@ Jika dijalankan tanpa admin, app otomatis memakai fallback Node (lebih lambat, t
 
 Lihat [CHANGELOG.md](CHANGELOG.md).
 
+## Unduh (Rilis GitHub)
+
+Unduh installer Windows terbaru dari halaman rilis:
+
+- **Browser:** https://github.com/DitoBimaRamadhan/Wiztri/releases/latest
+- **CLI (gh):** `gh release download --repo DitoBimaRamadhan/Wiztri`
+- **cURL:**
+
+  ```bash
+  curl -L -o "wiztri setup.exe" \
+    https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri%20setup.exe
+  ```
+
+Asset: `wiztri setup.exe` (NSIS, Windows x64). Jalankan sebagai **Administrator** untuk mode scan MFT cepat.
+
 ## Lisensi
 
 © 2026 **DeBeeR** — All rights reserved. Lihat [LICENSE](LICENSE).
