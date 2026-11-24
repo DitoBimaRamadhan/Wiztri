@@ -13,7 +13,7 @@ Disk usage analyzer untuk Windows, gaya WizTree/TreeSize. Membaca `$MFT` (NTFS) 
 - **Dropdown drive** — pilih drive A:–Z: tanpa mengetik.
 - **Buka di Explorer** — tombol ↔� per baris membuka folder/file di Windows Explorer.
 - **Penanda** — folder tersembunyi/sistem, symlink/junction, error akses.
-- **Live progress** — pada mode fallback Node.
+- **Live progress** — persentase + jumlah item saat memindai (mode fallback Node).
 - Offline, tanpa CDN font, UI gelap berbahasa Indonesia.
 
 ## Arsitektur
