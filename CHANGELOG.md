@@ -1,5 +1,20 @@
 # Changelog
 
+## Audit perbaikan II — 2026-11-25
+### Perbaikan bug (hasil audit oleh agent paralel)
+- **main.js (HIGH)**: MFT (`wiztri-scan.exe`) hanya dipakai saat root *adalah drive* (mis. `C:\`). Sebelumnya subfolder ikut dipindai MFT → mengembalikan tree seluruh drive tapi diberi label subfolder (hasil salah). Subfolder kini langsung fallback Node.
+- **main.js**: event progres akhir dikirim tanpa throttle → bilah selalu sampai 100% (sebelumnya bisa terbuang dalam 120 ms terakhir).
+- **main.js**: `ws error` pada `tryMft` kini juga mematikan child (cegah orphan pegang volume handle); cek batas kedalaman dipindah sebelum `readdir` (hindari kerja sia-sia).
+- **renderer**: kunci React per baris kini unik (index sibling) — nama kembar dalam satu folder tidak lagi kacau saat expand/pilih.
+- **Rust**: ukuran rekaman cabang positif kini dibatasi (anti-OOM pada geometri rusak); preferensi nama utamakan Win32 (ns 2) — nama DOS pendek tak lagi menimpa nama panjang; pembacaan parsial di EOF tidak lagi membuang byte ekor rekaman.
+### Keamanan
+- **scripts/release.ps1**: upload asset kini selalu via `Invoke-RestMethod` (token hanya di memori) — token tidak lagi muncul di baris perintah `curl`.
+- **server.js**: `/api/scan` menolak root non-drive-lokal (cegah SSRF via UNC `\\host\share` dan enumerasi path lain).
+- **main.js**: `sandbox: true` eksplisit di webPreferences.
+### Pengujian
+- Test diperkeras: `electron-smoke` mendeteksi kegagalan spawn (anti-false-pass); `smoke` memindai dir sementara berisi `Desktop.ini` (pengecekan hidden nyata), malformed encoding hanya menerima 400 + cek server tetap hidup; WebSocket CDP diberi timeout; assert folder/file dipisah (folder wajib array, file tanpa children).
+- `npm test` (script baru di package.json) menjalankan keempat suite serial. Semua PASS.
+
 ## Audit perbaikan — 2026-11-24
 ### Perbaikan bug
 - **Renderer**: persentase & bar ukuran kini memakai penyebut sesuai metrik (Size→total logis, Allocated→total teralokasi); sebelumnya selalu total logis, sehingga mode Allocated menampilkan % salah.

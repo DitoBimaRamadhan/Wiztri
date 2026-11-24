@@ -40,21 +40,13 @@ try {
   Write-Host "Release '$Tag' dibuat."
 }
 
-# Upload asset (libcurl dari PowerShell: pakai curl.exe bila ada)
+# Upload asset via Invoke-RestMethod (token hanya di memori, tak tampil di cmdline).
 $uploadUrl = $existing.upload_url -replace '\{.*$',''
 $assetName = $AssetName
 Write-Host "Upload '$assetName' ke release..."
-if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-  curl.exe -s -X POST -H "Authorization: Bearer $Token" `
-    -H "Content-Type: application/octet-stream" `
-    --data-binary "@$Asset" `
-    "$uploadUrl?name=$([uri]::EscapeDataString($assetName))" | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "curl upload gagal (kode $LASTEXITCODE)." }
-} else {
-  $file = [System.IO.File]::ReadAllBytes((Resolve-Path $Asset))
-  Invoke-RestMethod -Method Post -Uri "$uploadUrl?name=$([uri]::EscapeDataString($assetName))" `
-    -Headers $headers -ContentType "application/octet-stream" -Body $file | Out-Null
-}
+$file = [System.IO.File]::ReadAllBytes((Resolve-Path $Asset))
+Invoke-RestMethod -Method Post -Uri "$uploadUrl?name=$([uri]::EscapeDataString($assetName))" `
+  -Headers $headers -ContentType "application/octet-stream" -Body $file | Out-Null
 
 Write-Host ""
 Write-Host "Berhasil! Unduh:"

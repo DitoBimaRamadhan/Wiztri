@@ -22,11 +22,14 @@ const child = spawn(ELECTRON, ['.', '--enable-logging'], {
 });
 let stderr = '';
 child.stderr.on('data', (d) => (stderr += d));
+let spawnFailed = false;
+child.on('error', (e) => { spawnFailed = true; console.log('FAIL — spawn error:', e.code || e.message); });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
   await sleep(8000);
+  if (spawnFailed) { console.log('\nGAGAL ❌'); process.exit(1); }
   const alive = child.exitCode === null;
   console.log(alive ? 'PASS — proses Electron hidup (app tetap berjalan)' : 'FAIL — proses Electron mati/exit');
   if (child.exitCode !== null) console.log('exit code:', child.exitCode);

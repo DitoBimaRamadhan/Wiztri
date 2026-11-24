@@ -86,7 +86,9 @@ fn parse_record(buf: &[u8], frn: u64) -> Option<Node> {
                 if nlen > 0 && vb + 0x42 + nlen * 2 <= buf.len() {
                     let s = utf16(&buf[vb + 0x42..vb + 0x42 + nlen * 2]);
                     if !s.is_empty() {
-                        if nspace != 2 || name.is_none() { name = Some(s); }
+                        // preferensi: ns 2 (Win32+DOS) diutamakan; jika belum ada
+                        // nama, ambil apa pun (hindari nama DOS pendek menimpa panjang)
+                        if nspace == 2 || name.is_none() { name = Some(s); }
                     }
                 }
             }
@@ -213,7 +215,9 @@ fn main() {
     let mft_start = rd_u64(&boot, 0x30) * cluster as u64;
     let cpm = boot[0x40] as i8;
     let rec_size = if cpm > 0 {
-        cpm as usize * cluster
+        let rs = cpm as usize * cluster;
+        if rs > (1 << 20) { println!("{}", r#"{"error":"bad_record_size"}"#); std::process::exit(6); }
+        rs
     } else {
         let sh = (-(cpm as i32)) as usize;
         // guard: catatan > 2MB tak masuk akal utk $MFT; cegah OOM dr geometri rusak
@@ -248,35 +252,38 @@ fn main() {
     let mut frn: u64 = 0;
     let mut remaining = total_recs;
 
-    'outer: while remaining > 0 {
+    while remaining > 0 {
         let want = chunk_recs.min((remaining as usize) * rec_size);
         let mut got = 0usize;
+        let mut eof = false;
         while got < want {
             match f.read(&mut chunk[got..want]) {
-                Ok(0) => break 'outer,
+                Ok(0) => { eof = true; break; }
                 Ok(n) => got += n,
-                Err(_) => break 'outer,
+                Err(_) => { eof = true; break; }
             }
         }
-        if got == 0 { break; }
-        let recs = got / rec_size;
-        for r in 0..recs {
-            let start = r * rec_size;
-            {
-                let rec = &mut chunk[start..start + rec_size];
-                if &rec[0..4] == b"FILE" {
-                    fixup(rec, bps);
-                    if let Some(n) = parse_record(rec, frn + r as u64) {
-                        let idx = nodes.len();
-                        by_parent.entry(n.parent).or_default().push(idx);
-                        nodes.push(n);
+        // proses byte yang sudah terbaca dulu, walau EOF/error (jangan buang tail)
+        if got > 0 {
+            let recs = got / rec_size;
+            for r in 0..recs {
+                let start = r * rec_size;
+                {
+                    let rec = &mut chunk[start..start + rec_size];
+                    if &rec[0..4] == b"FILE" {
+                        fixup(rec, bps);
+                        if let Some(n) = parse_record(rec, frn + r as u64) {
+                            let idx = nodes.len();
+                            by_parent.entry(n.parent).or_default().push(idx);
+                            nodes.push(n);
+                        }
                     }
                 }
             }
+            frn += recs as u64;
+            remaining -= recs as u64;
         }
-        frn += recs as u64;
-        remaining -= recs as u64;
-        if got < want { break; }
+        if eof || got < want { break; }
     }
 
     // ---- hitung ukuran agregat (dengan proteksi siklus) ----

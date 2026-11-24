@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node server.js",
     "desktop": "electron .",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "test": "node test/smoke.js && node test/electron-smoke.js && node test/electron-cdp.js && node test/electron-scan.js"
   },
   "devDependencies": {
     "electron": "^33.4.11",

@@ -26,7 +26,7 @@ function tryMft(drive) {
   return new Promise((resolve) => {
     const tmp = path.join(os.tmpdir(), 'wiztri_mft_' + process.pid + '_' + Date.now() + '.json');
     const ws = fs.createWriteStream(tmp);
-    ws.on('error', () => finish(null)); // gagal tulis temp (mis. ENOSPC) -> jangan gantung
+    ws.on('error', () => { try { child.kill(); } catch {} finish(null); }); // gagal tulis temp -> jangan gantung/biarkan orphan
     const child = spawn(exe, [drive], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
     childRef = child;
     let done = false;
@@ -78,13 +78,13 @@ async function countNodes(root, depth = 0) {
 }
 
 async function nodeScan(root, onProgress, state, depth = 0) {
+  if (depth > 128) return { name: path.basename(root) || root, path: root, size: 0, children: [] }; // ponytail: depth cap 128, increase if deeper nesting required
   let entries;
   try {
     entries = await fs.promises.readdir(root, { withFileTypes: true });
   } catch {
     return { name: path.basename(root) || root, path: root, error: 'access_denied', size: 0, children: [] };
   }
-  if (depth > 128) return { name: path.basename(root) || root, path: root, size: 0, children: [] }; // ponytail: depth cap 128, increase if deeper nesting required
   let size = 0;
   const children = [];
   let idx = 0;
@@ -119,7 +119,11 @@ async function nodeScan(root, onProgress, state, depth = 0) {
 
 ipcMain.handle('scan', async (_evt, root) => {
   const base = root || process.env.SYSTEMDRIVE || 'C:\\';
-  const mft = await tryMft(parseDrive(base));
+  // MFT (wiztri-scan.exe) hanya utk root drive (mis. "C:\"). Untuk subfolder,
+  // scanner akan mengembalikan tree volume penuh — salah. Maka MFT dipakai
+  // hanya bila root persis drive; subfolder langsung fallback Node.
+  const isDriveRoot = /^[A-Za-z]:\\?$/.test(base);
+  const mft = isDriveRoot ? await tryMft(parseDrive(base)) : null;
   if (mft) return mft;
   // Prescan: hitung total node utk persentase progres.
   const total = await countNodes(base);
@@ -133,7 +137,8 @@ ipcMain.handle('scan', async (_evt, root) => {
   };
   c(0, base);
   const tree = await nodeScan(base, c, state);
-  c(state.count, '');
+  // event akhir dikirim langsung tanpa throttle agar UI selalu sampai 100%
+  _evt.sender.send('scan-progress', { count: state.count, total, dir: '' });
   return tree;
 });
 
@@ -147,6 +152,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   win.loadFile(path.join(__dirname, 'public', 'index.html'));

@@ -60,6 +60,13 @@ http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://localhost');
   if (u.pathname === '/api/scan') {
     const root = u.searchParams.get('root') || process.cwd();
+    // batasi ke root drive lokal (mis. "C:\..."): cegah SSRF via UNC
+    // (\\host\share) dan penelusuran path di luar drive lokal
+    if (!/^[A-Za-z]:[\\\/]/.test(root)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('root harus drive lokal (mis. C:\\...)');
+      return;
+    }
     try {
       const t = await scan(root);
       res.writeHead(200, { 'Content-Type': 'application/json' });

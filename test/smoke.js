@@ -5,10 +5,18 @@
 const { spawn } = require('child_process');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = 3917;
-const SCANROOT = path.join(ROOT, 'public');
+// scan direktori sementara yang berisi file tersembunyi (Desktop.ini) supaya
+// pengecekan penanda 'hidden' bermakna (bukan vacuous).
+const SCANROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'wiz_smoke_'));
+fs.writeFileSync(path.join(SCANROOT, 'Desktop.ini'), 'x');
+fs.writeFileSync(path.join(SCANROOT, 'a.txt'), 'y');
+fs.mkdirSync(path.join(SCANROOT, 'sub'));
+fs.writeFileSync(path.join(SCANROOT, 'sub', 'b.bin'), 'z');
 
 let failures = 0;
 const check = (name, cond) => {
@@ -65,7 +73,7 @@ const get = (url) => new Promise((resolve, reject) => {
     };
     t.children.forEach(walk);
     check('file tanpa kunci children / folder dgn children', shapeOk);
-    check('ada folder tersembunyi ditandai', hiddenSeen || true); // informatif
+    check('folder tersembunyi ditandai', hiddenSeen);
     // nilai size tidak negatif & anak lebih kecil dari total
     let nonneg = true;
     const walk2 = (n) => { if (n.size < 0) nonneg = false; (n.children || []).forEach(walk2); };
@@ -77,9 +85,11 @@ const get = (url) => new Promise((resolve, reject) => {
   const bad = await get(`http://127.0.0.1:${PORT}/../package.json`);
   check('path traversal diblokir (403/404)', bad.status === 403 || bad.status === 404);
 
-  // 3) malformed percent-encoding tidak boleh crash
+  // 3) malformed percent-encoding -> 400, server tetap hidup
   const mal = await get(`http://127.0.0.1:${PORT}/%E0%A4%A`).catch(() => ({ status: 0 }));
-  check('decoding rusak -> 400 (bukan crash)', mal.status === 400 || mal.status === 0);
+  check('decoding rusak -> 400 (bukan crash)', mal.status === 400);
+  const aliveAfter = await get(`http://127.0.0.1:${PORT}/`).catch(() => null);
+  check('server tetap hidup setelah request rusak', !!aliveAfter);
 
   srv.kill();
   await new Promise((r) => setTimeout(r, 200));

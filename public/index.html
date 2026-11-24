@@ -213,8 +213,8 @@
           <td className="pct">${pct.toFixed(pct < 1 && pct > 0 ? 2 : 1)}%</td>
           <td><span className="sizebar" style="${{ width: Math.min(120, pct * 1.2) }}"/></td>
         </tr>
-        ${open ? (node.children || []).map(c => html`
-          <${Row} key="${depth + ':' + c.name}" node="${c}" depth="${depth + 1}" total="${total}"
+        ${open ? (node.children || []).map((c, i) => html`
+          <${Row} key="${depth + ':' + i}" node="${c}" depth="${depth + 1}" total="${total}"
                  expanded="${expanded}" selected="${selected}" metric="${metric}"
                  onToggle="${onToggle}" onSelect="${onSelect}" basePath="${ownPath}"/>`) : null}
       </React.Fragment>`;
@@ -343,8 +343,8 @@
               <table>
                 <thead><tr><th>Nama</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
                 <tbody>
-                  ${(tree.children || []).map(c => html`
-                    <${Row} key="${c.name}" node="${c}" depth="${0}" total="${total}"
+                  ${(tree.children || []).map((c, i) => html`
+                    <${Row} key="${i}" node="${c}" depth="${0}" total="${total}"
                            expanded="${expanded}" selected="${selected}" metric="${metric}"
                            onToggle="${toggle}" onSelect="${select}" basePath="${tree.path}"/>`)}
                 </tbody>

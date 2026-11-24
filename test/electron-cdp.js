@@ -53,7 +53,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const m = JSON.parse(ev.data);
     if (m.id && pending.has(m.id)) { pending.get(m.id)(m.result); pending.delete(m.id); }
   };
-  await new Promise((res) => (ws.onopen = res));
+  const opened = await Promise.race([
+    new Promise((res) => (ws.onopen = res)),
+    sleep(5000).then(() => null),
+  ]);
+  if (!opened) { console.log('FAIL — WebSocket timeout'); child.kill(); process.exit(1); }
   await sleep(1500); // biarkan React mount
 
   const expr = `JSON.stringify({

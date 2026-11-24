@@ -39,7 +39,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const pending = new Map();
   const call = (method, params) => new Promise((res) => { const mid = ++id; pending.set(mid, res); ws.send(JSON.stringify({ id: mid, method, params })); });
   ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m.result); pending.delete(m.id); } };
-  await new Promise((res) => (ws.onopen = res));
+  const opened = await Promise.race([
+    new Promise((res) => (ws.onopen = res)),
+    sleep(5000).then(() => null),
+  ]);
+  if (!opened) { console.log('FAIL — WebSocket timeout'); child.kill(); process.exit(1); }
   await sleep(1200);
 
   const esc = JSON.stringify(SCANPATH + path.sep);
@@ -54,13 +58,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       shapeOk: (() => {
         let ok = true;
         const walk = n => {
-          if (Array.isArray(n.children)) n.children.forEach(walk);
-          else if ('children' in n) ok = false;
+          if ('children' in n) {
+            // kunci children bila ada harus array (folder); non-array = cacat
+            if (!Array.isArray(n.children)) { ok = false; return; }
+            n.children.forEach(walk);
+          } else {
+            // file: tak boleh punya kunci children
+            // (sudah tercover oleh cabang 'children' in n; file tak punya)
+          }
           if (typeof n.size !== 'number' || n.size < 0) ok = false;
         };
         (t.children||[]).forEach(walk);
         return ok;
       })(),
+      hasDir: (t.children||[]).some(c => Array.isArray(c.children)),
+      hasFile: (t.children||[]).some(c => !('children' in c)),
       progCount: prog.length,
       progFirst: prog[0] || null
     });
@@ -73,6 +85,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('path sesuai akar yang dipindai', out && path.resolve(out.pathKey) === SCANPATH);
   check('size angka positif', out && typeof out.size === 'number' && out.size > 0);
   check('shape benar (file tanpa children, semua size>=0)', out && out.shapeOk === true);
+  check('ada folder (children array) di hasil', out && out.hasDir === true);
+  check('ada file (tanpa children) di hasil', out && out.hasFile === true);
   check('root punya anak', out && out.kids > 0);
   check('event progres dikirim', out && out.progCount > 0);
   check('progress memuat total > 0', out && out.progFirst && out.progFirst.total > 0);
