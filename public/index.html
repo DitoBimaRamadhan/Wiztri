@@ -34,6 +34,17 @@
   }
   .bar input[type=text]:hover { border-color:var(--faint); }
   .bar input[type=text]:focus { border-color:var(--focus); }
+  .drive {
+    background:var(--bg); border:1px solid var(--line); color:var(--text);
+    padding:8px 10px; border-radius:8px; font:inherit; cursor:pointer;
+  }
+  .drive:hover { border-color:var(--faint); }
+  .open {
+    background:transparent; border:0; color:var(--faint); cursor:pointer;
+    font-size:13px; padding:2px 6px; border-radius:5px; line-height:1;
+    margin-left:6px; vertical-align:middle;
+  }
+  .open:hover { color:var(--teal); background:var(--surface2); }
   .btn {
     background:var(--amber); color:#241503; border:0; font-weight:600;
     padding:8px 18px; border-radius:8px; cursor:pointer; font-size:var(--fs-base);
@@ -162,11 +173,13 @@
   const tileColor = (i, isAgg) => isAgg ? MUTED : TILES[i % TILES.length];
   const tileDark = (c) => c === '#FFB454' || c === '#3FD6CB';
 
-  function Row({ node, depth, total, expanded, selected, metric, onToggle, onSelect }) {
+  function Row({ node, depth, total, expanded, selected, metric, onToggle, onSelect, basePath }) {
     const isDir = Array.isArray(node.children);
     const val = metric === 'alloc' ? node.alloc : node.size;
     const pct = total > 0 ? (val / total) * 100 : 0;
     const open = expanded.has(node);
+    const ownPath = basePath ? (basePath === '\\' ? '\\' + node.name : basePath + '\\' + node.name) : node.name;
+    const openPath = (e) => { e.stopPropagation(); if (W && W.openPath) W.openPath(ownPath); };
     return html`
       <React.Fragment>
         <tr className="${selected === node ? 'sel' : ''}" onClick="${() => onSelect(node)}">
@@ -179,6 +192,7 @@
             ${node.error ? html`<span className="mark err" title="${node.error}"/>` : null}
             ${node.hidden ? html`<span className="mark hidden" title="tersembunyi/sistem"/>` : null}
             ${node.symlink ? html`<span className="mark sym" title="symlink/junction"/>` : null}
+            <button className="open" title="Buka di Explorer" aria-label="Buka di Explorer" onClick="${openPath}">↗</button>
           </td>
           <td className="num">${fmt(val)}</td>
           <td className="pct">${pct.toFixed(pct < 1 && pct > 0 ? 2 : 1)}%</td>
@@ -187,7 +201,7 @@
         ${open ? (node.children || []).map(c => html`
           <${Row} key="${depth + ':' + c.name}" node="${c}" depth="${depth + 1}" total="${total}"
                  expanded="${expanded}" selected="${selected}" metric="${metric}"
-                 onToggle="${onToggle}" onSelect="${onSelect}"/>`) : null}
+                 onToggle="${onToggle}" onSelect="${onSelect}" basePath="${ownPath}"/>`) : null}
       </React.Fragment>`;
   }
 
@@ -199,10 +213,15 @@
     const [selected, setSelected] = useState(null);
     const [metric, setMetric] = useState('size');
     const [prog, setProg] = useState(null);
+    const [drives, setDrives] = useState([]);
 
     useEffect(() => {
       if (!W) return;
       return W.onProgress((d) => setProg(d));
+    }, []);
+
+    useEffect(() => {
+      if (W && W.listDrives) W.listDrives().then(setDrives).catch(() => {});
     }, []);
 
     const total = tree ? tree.size : 0;
@@ -262,6 +281,11 @@
       <div style="${{ display:'flex', flexDirection:'column', height:'100%' }}">
         <div className="stripe">
           <div className="bar">
+            ${drives.length ? html`
+              <select className="drive" aria-label="Pilih drive" value="${root}"
+                      onChange="${e => { const v = e.target.value; setRoot(v); run(v); }}">
+                ${drives.map(d => html`<option key="${d}" value="${d + '\\'}">${d}</option>`)}
+              </select>` : null}
             <input type="text" value="${root}" spellCheck="${false}"
                    aria-label="Path folder atau drive"
                    onChange="${e => setRoot(e.target.value)}"
@@ -296,7 +320,7 @@
                   ${(tree.children || []).map(c => html`
                     <${Row} key="${c.name}" node="${c}" depth="${0}" total="${total}"
                            expanded="${expanded}" selected="${selected}" metric="${metric}"
-                           onToggle="${toggle}" onSelect="${select}"/>`)}
+                           onToggle="${toggle}" onSelect="${select}" basePath="${tree.path}"/>`)}
                 </tbody>
               </table>
             </div>

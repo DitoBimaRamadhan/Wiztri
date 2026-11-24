@@ -1,7 +1,7 @@
 // Wiztri — Electron main process
 // Mode scan: coba wiztri-scan.exe (MFT, cepat, butuh admin) -> jika gagal, fallback walk Node (Win32).
 'use strict';
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const { spawn } = require('child_process');
 const os = require('os');
 const fs = require('fs');
@@ -134,6 +134,23 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+ipcMain.handle('list-drives', () => {
+  const out = [];
+  for (let i = 65; i <= 90; i++) { // A..Z
+    const letter = String.fromCharCode(i);
+    try { fs.statSync(letter + ':\\'); out.push(letter + ':'); } catch {}
+  }
+  return out;
+});
+
+ipcMain.handle('open-path', (_e, target) => {
+  try {
+    if (target && fs.existsSync(target)) { shell.showItemInFolder(target); return { ok: true }; }
+    if (target) { shell.openPath(target); return { ok: true }; }
+  } catch {}
+  return { ok: false };
+});
 
 // Pastikan scanner anak ikut mati saat app tutup (cegah orphan pegang volume handle).
 app.on('before-quit', () => {

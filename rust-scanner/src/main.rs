@@ -50,6 +50,9 @@ fn utf16(buf: &[u8]) -> String {
 }
 
 // Parse satu rekaman MFT -> Node (None bila bukan FILE / tak aktif / tanpa FILE_NAME).
+// Catatan: self-parenting (frn==parent) NORMAL di NTFS utk akar (frn 5) — akar
+// menunjuk dirinya sendiri. Bukan bug. Guard utk itu di emit_children (filter frn!=p)
+// dan calc (map seen) sengaja ada, jadi rekaman self-parent tak bikin loop.
 fn parse_record(buf: &[u8], frn: u64) -> Option<Node> {
     if buf.len() < 0x1c { return None; }
     if &buf[0..4] != b"FILE" { return None; }
