@@ -40,6 +40,14 @@ try {
   Write-Host "Release '$Tag' dibuat."
 }
 
+# Hapus asset lama bernama sama (jika ada) agar upload bisa menimpa.
+foreach ($a in $existing.assets) {
+  if ($a.name -eq $AssetName) {
+    Invoke-RestMethod -Method Delete -Uri $a.url -Headers $headers | Out-Null
+    Write-Host "Hapus asset lama '$AssetName'."
+  }
+}
+
 # Upload asset via Invoke-RestMethod (token hanya di memori, tak tampil di cmdline).
 $uploadUrl = $existing.upload_url -replace '\{.*$',''
 $assetName = $AssetName
