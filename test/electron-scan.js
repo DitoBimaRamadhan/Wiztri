@@ -44,6 +44,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const esc = JSON.stringify(SCANPATH + path.sep);
   const expr = `(async () => {
+    const prog = [];
+    window.wiztri.onProgress(d => prog.push(d));
     const t = await window.wiztri.scan(${esc});
     return JSON.stringify({
       name: t.name, pathKey: t.path, size: t.size, alloc: t.alloc,
@@ -58,7 +60,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         };
         (t.children||[]).forEach(walk);
         return ok;
-      })()
+      })(),
+      progCount: prog.length,
+      progFirst: prog[0] || null
     });
   })()`;
   const r = await call('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
@@ -70,7 +74,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('size angka positif', out && typeof out.size === 'number' && out.size > 0);
   check('shape benar (file tanpa children, semua size>=0)', out && out.shapeOk === true);
   check('root punya anak', out && out.kids > 0);
+  check('event progres dikirim', out && out.progCount > 0);
+  check('progress memuat total > 0', out && out.progFirst && out.progFirst.total > 0);
+  check('progress memuat count >= 0', out && out.progFirst && out.progFirst.count >= 0);
+  check('progress memuat dir', out && out.progFirst && typeof out.progFirst.dir === 'string');
   console.log('  hasil scan → size=' + (out && out.size) + ' kids=' + (out && out.kids) + ' err=' + (out && out.err));
+  console.log('  progres → event=' + (out && out.progCount) + ' first={count=' + (out && out.progFirst && out.progFirst.count) + ', total=' + (out && out.progFirst && out.progFirst.total) + '}');
 
   ws.close();
   child.kill();

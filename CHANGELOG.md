@@ -5,6 +5,7 @@
 - **Renderer**: persentase & bar ukuran kini memakai penyebut sesuai metrik (Size→total logis, Allocated→total teralokasi); sebelumnya selalu total logis, sehingga mode Allocated menampilkan % salah.
 - **Renderer**: backend Node tidak menghasilkan `alloc` — kini dinormalisasi (`alloc = size`), sehingga mode Allocated tidak lagi blank/kosong di treemap.
 - **Renderer**: error scan (mis. akses ditolak) kini ditampilkan di bilah bawah, bukan ditelan diam-diam.
+- **Renderer**: progres scan kini menampilkan persentase + bilah + jumlah item (`N / total item`); sebelumnya hanya jumlah item. Persentase dihitung dari total node yang diketahui via prescan (`countNodes`) di main.js, dan penghitungan item diperbaiki agar tiap node (termasuk folder) dihitung sekali.
 - **main.js**: `tryMft` tidak lagi bisa menggantung selamanya + membocorkan file temp bila penulisan temp gagal (tambah listener `ws error`).
 - **main.js**: `open-path` kini membuka folder dengan `shell.openPath` (file tetap `showItemInFolder`), dan melaporkan gagal bila target tak ada.
 - **server.js**: perbaiki path-traversal *prefix-match* (guard boundary case-insensitive + tolak `..`), bungkus `decodeURIComponent` (400 alih-alih crash), tambah depth cap 128, bind ke `127.0.0.1`.

@@ -54,9 +54,30 @@ function tryMft(drive) {
   });
 }
 
+// Hitung total node (dir+file) di bawah root, termasuk root.
+// Aturan sama dgn nodeScan: tak mengikuti symlink, depth cap 128,
+// error akses diabaikan. Digunakan utk persentase progres.
+async function countNodes(root, depth = 0) {
+  if (depth > 128) return 1;
+  let entries;
+  try {
+    entries = await fs.promises.readdir(root, { withFileTypes: true });
+  } catch {
+    return 1;
+  }
+  let c = 1;
+  for (const d of entries) {
+    if (d.isSymbolicLink()) { c++; continue; }
+    if (d.isDirectory()) {
+      try { c += await countNodes(path.join(root, d.name), depth + 1); } catch { c++; }
+    } else {
+      c++;
+    }
+  }
+  return c;
+}
+
 async function nodeScan(root, onProgress, state, depth = 0) {
-  state.count++;
-  if (state.count % 1024 === 0 && onProgress) onProgress(state.count, root);
   let entries;
   try {
     entries = await fs.promises.readdir(root, { withFileTypes: true });
@@ -100,13 +121,15 @@ ipcMain.handle('scan', async (_evt, root) => {
   const base = root || process.env.SYSTEMDRIVE || 'C:\\';
   const mft = await tryMft(parseDrive(base));
   if (mft) return mft;
-  const state = { count: 0 };
+  // Prescan: hitung total node utk persentase progres.
+  const total = await countNodes(base);
+  const state = { count: 1 }; // akar dihitung sekali; anak dihitung di nodeScan
   let lastSend = 0;
   const c = (count, dir) => {
     const now = Date.now();
     if (now - lastSend < 120) return; // throttle: maks ~8 event/detik
     lastSend = now;
-    _evt.sender.send('scan-progress', { count, dir });
+    _evt.sender.send('scan-progress', { count, total, dir });
   };
   c(0, base);
   const tree = await nodeScan(base, c, state);
