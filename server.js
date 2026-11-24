@@ -17,7 +17,8 @@ const HIDDEN = new Set([
   '$Extend', 'Config.Msi', 'DumpStack.log.tmp', 'Desktop.ini',
 ]);
 
-async function scan(abs) {
+async function scan(abs, depth = 0) {
+  if (depth > 128) return { name: path.basename(abs) || abs, path: abs, size: 0, children: [] };
   let entries;
   try {
     entries = await fs.promises.readdir(abs, { withFileTypes: true });
@@ -44,7 +45,7 @@ async function scan(abs) {
     }
   }
   for (const d of dirs) {
-    const sub = await scan(path.join(abs, d.name));
+    const sub = await scan(path.join(abs, d.name), depth + 1);
     sub.hidden = HIDDEN.has(d.name);
     size += sub.size || 0;
     children.push(sub);
@@ -70,13 +71,17 @@ http.createServer(async (req, res) => {
     return;
   }
   // static
-  let p = decodeURIComponent(u.pathname);
+  let p;
+  try { p = decodeURIComponent(u.pathname); } catch { res.writeHead(400); res.end('bad request'); return; }
+  if (p.includes('..')) { res.writeHead(403); res.end(); return; }
   if (p === '/') p = '/index.html';
   const fp = path.normalize(path.join(PUBLIC, p));
-  if (!fp.startsWith(PUBLIC)) { res.writeHead(403); res.end(); return; }
+  // cek boundary case-insensitive (Windows): cegah publik-> sibling "public*"
+  const B = PUBLIC + path.sep;
+  if (fp !== PUBLIC && !fp.toLowerCase().startsWith(B.toLowerCase())) { res.writeHead(403); res.end(); return; }
   fs.readFile(fp, (err, data) => {
     if (err) { res.writeHead(404); res.end('not found'); return; }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream' });
     res.end(data);
   });
-}).listen(PORT, () => console.log(`TreeSize MVP -> http://localhost:${PORT}`));
+}).listen(PORT, '127.0.0.1', () => console.log(`TreeSize MVP -> http://127.0.0.1:${PORT}`));

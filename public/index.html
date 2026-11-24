@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'">
 <title>Wiztri</title>
 <script src="vendor/react.production.min.js"></script>
 <script src="vendor/react-dom.production.min.js"></script>
@@ -126,6 +127,15 @@
     return n + ' B';
   };
 
+  // Backend Node tidak menghasilkan `alloc`; normalisasi agar mode Allocated
+  // jatuh ke `size` (jujur: tak ada info teralokasi terpisah).
+  const normalizeAlloc = (n) => {
+    if (!n) return n;
+    n.alloc = (typeof n.alloc === 'number') ? n.alloc : (n.size || 0);
+    (n.children || []).forEach(normalizeAlloc);
+    return n;
+  };
+
   // ---- Squarified treemap ----
   function squarify(sizes, x, y, w, h) {
     const out = [];
@@ -175,7 +185,7 @@
 
   function Row({ node, depth, total, expanded, selected, metric, onToggle, onSelect, basePath }) {
     const isDir = Array.isArray(node.children);
-    const val = metric === 'alloc' ? node.alloc : node.size;
+    const val = metric === 'alloc' ? (node.alloc ?? node.size) : node.size;
     const pct = total > 0 ? (val / total) * 100 : 0;
     const open = expanded.has(node);
     const ownPath = basePath ? (basePath === '\\' ? '\\' + node.name : basePath + '\\' + node.name) : node.name;
@@ -214,6 +224,7 @@
     const [metric, setMetric] = useState('size');
     const [prog, setProg] = useState(null);
     const [drives, setDrives] = useState([]);
+    const [err, setErr] = useState(null);
 
     useEffect(() => {
       if (!W) return;
@@ -224,8 +235,9 @@
       if (W && W.listDrives) W.listDrives().then(setDrives).catch(() => {});
     }, []);
 
-    const total = tree ? tree.size : 0;
-    const totalAlloc = tree ? (tree.alloc || 0) : 0;
+    const logicalTotal = tree ? (tree.size || 0) : 0;
+    const allocTotal = tree ? (tree.alloc || 0) : 0;
+    const total = metric === 'alloc' ? allocTotal : logicalTotal;
 
     const items = useMemo(() => {
       if (!tree) return 0;
@@ -235,13 +247,16 @@
     }, [tree]);
 
     async function run(p) {
-      setBusy(true); setProg(null); setSelected(null); setExpanded(new Set());
+      setBusy(true); setProg(null); setSelected(null); setExpanded(new Set()); setErr(null);
       try {
         const t = W
           ? await W.scan(p)
           : await fetch('/api/scan?root=' + encodeURIComponent(p)).then(r => { if (!r.ok) throw new Error('scan failed'); return r.json(); });
-        setTree(t);
+        const n = normalizeAlloc(t);
+        setTree(n);
+        if (n && n.error) setErr(String(n.error));
       } catch (e) {
+        setErr(String(e));
         setTree({ name: p, error: String(e), size: 0, children: [] });
       } finally { setBusy(false); setProg(null); }
     }
@@ -261,7 +276,7 @@
 
     const tmItems = useMemo(() => {
       const kids = tmNode ? (tmNode.children || []) : [];
-      let list = kids.map(n => ({ node: n, v: metric === 'alloc' ? n.alloc : n.size })).filter(o => o.v > 0);
+      let list = kids.map(n => ({ node: n, v: metric === 'alloc' ? (n.alloc ?? n.size) : n.size })).filter(o => o.v > 0);
       list.sort((a, b) => b.v - a.v);
       if (list.length > 200) {
         const top = list.slice(0, 200);
@@ -298,8 +313,8 @@
           </div>
           ${tree ? html`
             <div className="stats">
-              <div className="stat"><div className="v amber">${fmt(total)}</div><div className="l">Ukuran logis</div></div>
-              <div className="stat"><div className="v teal">${fmt(totalAlloc)}</div><div className="l">Teralokasi</div></div>
+              <div className="stat"><div className="v amber">${fmt(logicalTotal)}</div><div className="l">Ukuran logis</div></div>
+              <div className="stat"><div className="v teal">${fmt(allocTotal)}</div><div className="l">Teralokasi</div></div>
               <div className="stat"><div className="v">${items.toLocaleString()}</div><div className="l">Item</div></div>
               ${prog ? html`<span className="live">memindai — ${prog.count.toLocaleString()} item</span>` : null}
             </div>` : null}
@@ -343,7 +358,7 @@
           </div>`}
 
         <div className="foot">
-          <span>${tree ? (tree.path || tree.name) : ''}</span>
+          <span>${err ? '⚠ ' + err : (tree ? (tree.path || tree.name) : '')}</span>
         </div>
       </div>`;
   }

@@ -26,6 +26,7 @@ function tryMft(drive) {
   return new Promise((resolve) => {
     const tmp = path.join(os.tmpdir(), 'wiztri_mft_' + process.pid + '_' + Date.now() + '.json');
     const ws = fs.createWriteStream(tmp);
+    ws.on('error', () => finish(null)); // gagal tulis temp (mis. ENOSPC) -> jangan gantung
     const child = spawn(exe, [drive], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
     childRef = child;
     let done = false;
@@ -146,10 +147,12 @@ ipcMain.handle('list-drives', () => {
 
 ipcMain.handle('open-path', (_e, target) => {
   try {
-    if (target && fs.existsSync(target)) { shell.showItemInFolder(target); return { ok: true }; }
-    if (target) { shell.openPath(target); return { ok: true }; }
-  } catch {}
-  return { ok: false };
+    if (!target || typeof target !== 'string') return { ok: false };
+    const st = fs.statSync(target);
+    if (st.isDirectory()) { const err = shell.openPath(target); return { ok: !err }; }
+    shell.showItemInFolder(target);
+    return { ok: true };
+  } catch { return { ok: false }; }
 });
 
 // Pastikan scanner anak ikut mati saat app tutup (cegah orphan pegang volume handle).

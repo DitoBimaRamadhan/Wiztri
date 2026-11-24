@@ -72,7 +72,8 @@ fn parse_record(buf: &[u8], frn: u64) -> Option<Node> {
         let len = rd_u32(buf, o + 4) as usize;
         if len == 0 || o + len > buf.len() || o + len > used { break; }
         let nonresid = buf[o + 8] != 0;
-        if ty == 0x30 && !nonresid && parent.is_none() {
+        // guard baca vlen/voff (o+0x10/o+0x14) agar tak OOB utk attr resident pendek/rusak
+        if ty == 0x30 && !nonresid && parent.is_none() && o + 0x16 <= buf.len() {
             let vlen = rd_u32(buf, o + 0x10) as usize;
             let voff = rd_u16(buf, o + 0x14) as usize;
             let vb = o + voff;
@@ -123,13 +124,15 @@ fn parse_mft_bytes(buf: &[u8]) -> Option<u64> {
         if len == 0 || o + len > buf.len() || o + len > used { break; }
         if ty == 0x80 {
             if buf[o + 8] != 0 {
-                // non-resident: ukuran nyata @0x2c
-                if o + 0x34 <= buf.len() {
-                    return Some(rd_u64(buf, o + 0x2c));
+                // non-resident: DataSize @0x30 (bukan 0x2c yg campur dgn AllocatedSize)
+                if o + 0x38 <= buf.len() {
+                    return Some(rd_u64(buf, o + 0x30));
                 }
             } else {
-                let vlen = rd_u32(buf, o + 0x10) as u64;
-                return Some(vlen);
+                if o + 0x12 <= buf.len() {
+                    let vlen = rd_u32(buf, o + 0x10) as u64;
+                    return Some(vlen);
+                }
             }
         }
         o += len;
@@ -181,7 +184,10 @@ fn main() {
     let mut f = match File::open(&target) {
         Ok(f) => f,
         Err(e) => {
-            println!("{{\"error\":\"no_volume_access\",\"detail\":\"{}\"}}", e);
+            let mut s = String::from("{\"error\":\"no_volume_access\",\"detail\":\"");
+            esc(&e.to_string(), &mut s);
+            s.push_str("\"}");
+            println!("{}", s);
             std::process::exit(2);
         }
     };
@@ -208,7 +214,8 @@ fn main() {
         cpm as usize * cluster
     } else {
         let sh = (-(cpm as i32)) as usize;
-        if sh >= 63 { println!("{}", r#"{"error":"bad_record_size"}"#); std::process::exit(6); }
+        // guard: catatan > 2MB tak masuk akal utk $MFT; cegah OOM dr geometri rusak
+        if sh >= 21 { println!("{}", r#"{"error":"bad_record_size"}"#); std::process::exit(6); }
         1usize << sh
     };
 
