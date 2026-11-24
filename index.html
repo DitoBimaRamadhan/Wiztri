@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Wiztri — penganalisa pemakaian disk untuk Windows. Scan cepat via pembacaan $MFT, treemap, dan tampilan tabel.">
+<title>Wiztri — Analisa Disk Cepat untuk Windows</title>
+<style>
+  :root{
+    --bg:#0B1220; --surface:#101B2C; --surface2:#152437; --line:#21334F;
+    --text:#E6EDF6; --dim:#8DA1BC; --faint:#5E738F;
+    --amber:#FFB454; --teal:#3FD6CB; --red:#FF6B6B;
+    --mono:"Cascadia Mono","Consolas",ui-monospace,monospace;
+    --sans:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+  :focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+  a{color:var(--teal);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 24px}
+  header{border-bottom:1px solid var(--line);background:var(--surface)}
+  .nav{display:flex;align-items:center;gap:28px;height:64px}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;color:var(--text)}
+  .logo .lg{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--amber),var(--teal));display:grid;place-items:center;font-size:14px;color:#0B1220}
+  .navlinks{margin-left:auto;display:flex;gap:20px;color:var(--dim);font-size:14px}
+  .navlinks a{color:var(--dim)}
+  .navlinks a:hover{color:var(--text);text-decoration:none}
+  .hero{padding:72px 0 56px;text-align:center}
+  .hero .kicker{display:inline-block;color:var(--teal);font:600 13px var(--mono);letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--line);border-radius:999px;padding:5px 14px;background:var(--surface)}
+  .hero h1{font-size:44px;line-height:1.12;font-weight:750;margin:20px 0 12px;letter-spacing:-.02em}
+  .hero h1 em{font-style:normal;color:var(--amber)}
+  .hero p{max-width:560px;margin:0 auto 28px;color:var(--dim);font-size:17px}
+  .cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;align-items:center}
+  .btn{display:inline-flex;align-items:center;gap:8px;background:var(--amber);color:#241503;font-weight:600;padding:12px 22px;border-radius:10px;font-size:15px;border:0;cursor:pointer;transition:filter .12s}
+  .btn:hover{filter:brightness(1.08);text-decoration:none}
+  .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  .btn.ghost:hover{border-color:var(--faint)}
+  .btn small{font-weight:500;opacity:.75}
+  .win-note{margin-top:14px;color:var(--faint);font-size:13px}
+  .badges{display:flex;gap:8px;justify-content:center;margin-top:18px;flex-wrap:wrap}
+  .badge{color:var(--dim);font-size:12px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 12px}
+  .visual{margin:40px auto 0;max-width:900px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface);box-shadow:0 24px 60px rgba(0,0,0,.45)}
+  .bar{display:flex;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);align-items:center}
+  .dot{width:10px;height:10px;border-radius:50%}
+  .dot.r{background:#ff5f57}.dot.y{background:#febc2e}.dot.g{background:#28c840}
+  .bar input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--text);padding:6px 10px;border-radius:7px;font-size:13px;font-family:var(--mono)}
+  .bar .scan{background:var(--amber);color:#241503;border:0;border-radius:7px;padding:6px 14px;font-weight:600;font-size:13px}
+  .cols{display:flex;min-height:320px}
+  .left{flex:1.2;border-right:1px solid var(--line);padding:10px 0;font-family:var(--mono);font-size:12.5px}
+  .row{display:flex;align-items:center;padding:5px 16px;color:var(--dim)}
+  .row .tw{width:14px;color:var(--faint)}
+  .row .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+  .row .sz{width:64px;text-align:right;color:var(--dim)}
+  .row .pct{width:44px;text-align:right;color:var(--faint)}
+  .row.hl{background:var(--sel,#0F2233);box-shadow:inset 2px 0 0 var(--teal)}
+  .barx{height:5px;background:var(--teal);border-radius:3px}
+  .right{flex:1;position:relative}
+  .tm{position:absolute;inset:0;margin:14px}
+  .tile{position:absolute;border-radius:4px;border:1px solid rgba(0,0,0,.3);display:grid;place-items:end start;padding:4px;font-size:10px;color:#0B1220;font-weight:600}
+  .tile.dk{color:#EAF2FB}
+  section{padding:64px 0}
+  section h2{font-size:26px;font-weight:700;margin:0 0 8px}
+  section .lead{color:var(--dim);max-width:600px;margin:0 0 36px}
+  .featgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px}
+  .card .ic{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;font-size:18px;margin-bottom:14px;background:var(--surface2)}
+  .card h3{margin:0 0 6px;font-size:16px}
+  .card p{margin:0;color:var(--dim);font-size:14px}
+  .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;counter-reset:st}
+  .step{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px;position:relative}
+  .step::before{counter-increment:st;content:counter(st);position:absolute;top:18px;right:20px;font:750 30px var(--mono);color:var(--surface2)}
+  .step h3{margin:0 0 6px;font-size:16px}
+  .step p{margin:0;color:var(--dim);font-size:14px}
+  code{font-family:var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 7px;font-size:13px;color:var(--teal)}
+  .cmd{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:14px 18px;font-family:var(--mono);font-size:13px;color:var(--teal);overflow-x:auto;margin:10px 0}
+  .dl{display:flex;gap:14px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin-top:18px}
+  .dl .info{flex:1;min-width:220px}
+  .dl .info b{font-size:15px}
+  .dl .info span{display:block;color:var(--dim);font-size:13px;margin-top:2px}
+  footer{border-top:1px solid var(--line);padding:28px 0 40px;color:var(--faint);font-size:13px}
+  .footrow{display:flex;gap:20px;flex-wrap:wrap;align-items:center}
+  .footrow .right2{margin-left:auto}
+  @media(max-width:760px){
+    .navlinks{display:none}
+    .hero h1{font-size:32px}
+    .cols{flex-direction:column}
+    .left{border-right:0;border-bottom:1px solid var(--line)}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="logo" href="#"><span class="lg">W</span> Wiztri</a>
+    <nav class="navlinks">
+      <a href="#fitur">Fitur</a>
+      <a href="#cara">Cara pakai</a>
+      <a href="#unduh">Unduh</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero wrap">
+  <span class="kicker">Analisa Disk untuk Windows</span>
+  <h1>Lihat pemakaian disk<em> sekejap</em></h1>
+  <p>Wiztri membaca <code>$MFT</code> NTFS secara mentah untuk memindai seluruh drive dalam hitungan detik — dengan tampilan tabel dan treemap yang jernih.</p>
+  <div class="cta">
+    <a class="btn" href="https://github.com/DitoBimaRamadhan/Wiztri/releases/latest">⬇ Unduh untuk Windows
+      <small>wiztri setup.exe</small></a>
+    <a class="btn ghost" href="https://github.com/DitoBimaRamadhan/Wiztri">Lihat kode sumber</a>
+  </div>
+  <div class="win-note">Jalankan sebagai <strong>Administrator</strong> untuk mode scan MFT tercepat.</div>
+  <div class="badges">
+    <span class="badge">Windows x64</span>
+    <span class="badge">NTFS / MFT</span>
+    <span class="badge">Offline</span>
+    <span class="badge">Bahasa Indonesia</span>
+  </div>
+
+  <div class="visual" aria-hidden="true">
+    <div class="bar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <input value="C:\" readonly>
+      <button class="scan">Scan</button>
+    </div>
+    <div class="cols">
+      <div class="left">
+        <div class="row hl"><span class="tw">▾</span><span class="nm">Windows</span><span class="sz">28.4 GB</span><span class="pct">42%</span></div>
+        <div class="row"><span class="tw">▾</span><span class="nm">Users</span><span class="sz">19.1 GB</span><span class="pct">28%</span></div>
+        <div class="row"><span class="tw">▸</span><span class="nm">Program Files</span><span class="sz">11.7 GB</span><span class="pct">17%</span></div>
+        <div class="row"><span class="tw">▸</span><span class="nm">Rust</span><span class="sz">6.2 GB</span><span class="pct">9%</span></div>
+        <div class="row"><span class="tw"></span><span class="nm">pagefile.sys</span><span class="sz">2.8 GB</span><span class="pct">4%</span></div>
+      </div>
+      <div class="right">
+        <div class="tm">
+          <div class="tile" style="left:0;top:0;width:38%;height:52%;background:#FFB454">Windows</div>
+          <div class="tile" style="left:38%;top:0;width:30%;height:52%;background:#3FD6CB">Users</div>
+          <div class="tile dk" style="left:68%;top:0;width:32%;height:38%;background:#2E8FB8">Program Files</div>
+          <div class="tile" style="left:0;top:52%;width:44%;height:48%;background:conic-gradient(#43B5A6,#3FD6CB)">Rust</div>
+          <div class="tile dk" style="left:44%;top:52%;width:24%;height:48%;background:#43618F">pagefile</div>
+          <div class="tile dk" style="left:68%;top:38%;width:32%;height:62%;background:#33415E">Lainnya</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section id="fitur"><div class="wrap">
+  <h2>Kenapa Wiztri?</h2>
+  <p class="lead">Dibangun untuk menemukan apa yang memakan ruang disk Anda dengan cepat dan tanpa ribet.</p>
+  <div class="featgrid">
+    <div class="card"><div class="ic">⚡</div><h3>Scan cepat via MFT</h3><p>Pembacaan mentah <code>$MFT</code> (Rust) memindai drive dalam hitungan detik — jauh lebih cepat daripada walk biasa.</p></div>
+    <div class="card"><div class="ic">◫</div><h3>Treemap & tabel</h3><p>Proporsi ukuran divisualisasikan sebagai treemap squarified, dengan tabel terurut (Size / Allocated).</p></div>
+    <div class="card"><div class="ic">💽</div><h3>Dropdown drive</h3><p>Pilih drive A:–Z: langsung dari dropdown — tanpa mengetik path.</p></div>
+    <div class="card"><div class="ic">📂</div><h3>Buka di Explorer</h3><p>Satu klik (↗) untuk membuka folder/file di Windows Explorer.</p></div>
+    <div class="card"><div class="ic">🛡</div><h3>Penanda sistem</h3><p>Folder tersembunyi/sistem, symlink/junction, dan error akses ditandai jelas.</p></div>
+    <div class="card"><div class="ic">🔌</div><h3>Offline & privat</h3><p>Data tidak meninggalkan komputer Anda. Tanpa akun, tanpa cloud.</p></div>
+  </div>
+</div></section>
+
+<section id="cara"><div class="wrap">
+  <h2>Cara pakai</h2>
+  <p class="lead">Semudah menjalankan installer dan menekan tombol Scan.</p>
+  <div class="steps">
+    <div class="step"><h3>Unduh & install</h3><p>Jalankan <code>wiztri setup.exe</code>, lalu ikuti petunjuk installer (NSIS).</p></div>
+    <div class="step"><h3>Jalankan sebagai Administrator</h3><p>Klik kanan → <em>Run as administrator</em> untuk mengaktifkan mode scan MFT cepat.</p></div>
+    <div class="step"><h3>Pilih drive & Scan</h3><p>Pilih drive dari dropdown, tekan <strong>Scan</strong>, lalu jelajahi hasilnya.</p></div>
+  </div>
+</div></section>
+
+<section id="unduh"><div class="wrap">
+  <h2>Unduh</h2>
+  <p class="lead">Rilis terbaru tersedia di GitHub.</p>
+  <div class="dl">
+    <div class="info"><b>Wiztri 0.2.0</b><span>Installer Windows x64 · NSIS · ±78 MB</span></div>
+    <a class="btn" href="https://github.com/DitoBimaRamadhan/Wiztri/releases/latest">⬇ Unduh
+      <small>wiztri setup.exe</small></a>
+  </div>
+  <p class="lead" style="margin-top:36px">Unduh lewat terminal:</p>
+  <div class="cmd">curl -L -o "wiztri setup.exe" \
+  https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri%20setup.exe</div>
+  <div class="cmd">gh release download v0.2.0 --repo DitoBimaRamadhan/Wiztri</div>
+</div></section>
+
+<footer><div class="wrap footrow">
+  <span>© 2026 <strong>DeBeeR</strong> — All rights reserved. <a href="https://github.com/DitoBimaRamadhan/Wiztri/blob/main/LICENSE">Lisensi</a></span>
+  <span class="right2">Wiztri · <a href="https://github.com/DitoBimaRamadhan/Wiztri">GitHub</a></span>
+</div></footer>
+
+</body>
+</html>
