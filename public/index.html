@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wiztri</title>
+<script src="vendor/react.production.min.js"></script>
+<script src="vendor/react-dom.production.min.js"></script>
+<script src="vendor/htm.js"></script>
+<style>
+  :root {
+    --bg:#0B1220; --surface:#101B2C; --surface2:#152437; --line:#21334F;
+    --text:#E6EDF6; --dim:#8DA1BC; --faint:#5E738F;
+    --amber:#FFB454; --teal:#3FD6CB; --red:#FF6B6B;
+    --sel:#0F2233; --focus:#3FD6CB;
+    --fs-base:13px; --fs-label:12px; --fs-stat:22px; --fs-title:15px;
+    --mono:"Cascadia Mono","Consolas",ui-monospace,monospace;
+    --sans:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    margin:0; background:var(--bg); color:var(--text);
+    font:var(--fs-base)/1.5 var(--sans); overflow:hidden;
+    font-variant-numeric:tabular-nums;
+  }
+  :focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+  .stripe { position:relative; background:var(--surface); border-bottom:1px solid var(--line); flex:0 0 auto; }
+  .bar { display:flex; gap:10px; padding:12px 16px; align-items:center; }
+  .bar input[type=text] {
+    flex:1; max-width:460px; background:var(--bg); border:1px solid var(--line);
+    color:var(--text); padding:8px 12px; border-radius:8px; font:inherit;
+    transition:border-color .12s;
+  }
+  .bar input[type=text]:hover { border-color:var(--faint); }
+  .bar input[type=text]:focus { border-color:var(--focus); }
+  .btn {
+    background:var(--amber); color:#241503; border:0; font-weight:600;
+    padding:8px 18px; border-radius:8px; cursor:pointer; font-size:var(--fs-base);
+    transition:filter .12s;
+  }
+  .btn:hover { filter:brightness(1.08); }
+  .btn:disabled { opacity:.45; cursor:wait; }
+  .metric { display:flex; gap:2px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:3px; }
+  .metric button {
+    background:transparent; color:var(--dim); border:0; padding:5px 12px;
+    border-radius:6px; cursor:pointer; font-size:var(--fs-label); font-weight:500; transition:background .12s,color .12s;
+  }
+  .metric button.on { background:var(--teal); color:#062b28; }
+  .stats { display:flex; gap:0; padding:8px 16px 10px; align-items:baseline; }
+  .stat { margin-right:28px; }
+  .stat .v { font-family:var(--mono); font-size:var(--fs-stat); line-height:1.1; font-weight:600; }
+  .stat .l { color:var(--dim); font-size:var(--fs-label); margin-top:2px; }
+  .stat .v.amber { color:var(--amber); }
+  .stat .v.teal { color:var(--teal); }
+  .live { color:var(--teal); font-family:var(--mono); font-size:var(--fs-label); margin-left:auto; }
+  .cols { display:flex; height:100%; }
+  .panel { height:100%; overflow:auto; }
+  .left { flex:1.2; border-right:1px solid var(--line); }
+  .right { flex:1; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:right; padding:4px 14px; white-space:nowrap; }
+  th:nth-child(1),td:nth-child(1) { text-align:left; }
+  thead th {
+    color:var(--faint); font-weight:500; font-size:var(--fs-label);
+    border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--surface);
+  }
+  tbody tr { cursor:pointer; transition:background .08s; }
+  tbody tr:hover { background:var(--surface2); }
+  tbody tr.sel { background:var(--sel); box-shadow:inset 2px 0 0 var(--teal); }
+  td.num { font-family:var(--mono); font-size:12px; }
+  td.pct { color:var(--dim); font-size:12px; }
+  .mark { display:inline-block; width:9px; height:9px; border-radius:2px; margin-left:6px; vertical-align:middle; }
+  .mark.err { background:var(--red); } .mark.hidden { background:var(--amber); } .mark.sym { background:var(--teal); }
+  .tw { display:inline-block; cursor:pointer; color:var(--faint); width:16px; text-align:center; user-select:none; }
+  .spacer { display:inline-block; }
+  .sizebar { display:inline-block; height:5px; border-radius:3px; background:var(--teal); margin-left:10px; vertical-align:middle; }
+  #tm { position:relative; width:100%; height:100%; }
+  .tile { position:absolute; overflow:hidden; border:1px solid rgba(0,0,0,.3); border-radius:3px; cursor:pointer; transition:filter .08s; }
+  .tile:hover { filter:brightness(1.22); }
+  .tile .t { position:absolute; left:5px; bottom:5px; right:5px; font-size:11px; line-height:1.2; color:#0B1220; font-weight:600; pointer-events:none; word-break:break-all; }
+  .tile.dk .t { color:#EAF2FB; }
+  .empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; text-align:center; padding:0 32px; color:var(--dim); }
+  .empty .glyph { font-size:42px; line-height:1; margin-bottom:14px; opacity:.8; }
+  .empty h1 { font-size:var(--fs-title); color:var(--text); font-weight:600; margin:0 0 8px; }
+  .empty p { max-width:46ch; margin:0 0 18px; }
+  .empty .btn { }
+  .quiet { color:var(--faint); text-align:center; padding-top:40px; }
+  .foot { padding:6px 16px; color:var(--faint); border-top:1px solid var(--line); font-size:var(--fs-label); flex:0 0 auto; }
+  @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+  @media (max-width:900px) {
+    .cols { flex-direction:column; }
+    .left { flex:1 1 55%; border-right:0; border-bottom:1px solid var(--line); }
+    .right { flex:1 1 45%; }
+    .stats { flex-wrap:wrap; }
+    .live { margin-left:0; width:100%; margin-top:6px; }
+  }
+  .hidden-skip { position:absolute; left:-9999px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+(() => {
+  const { useState, useEffect, useMemo } = React;
+  const html = htm.bind(React.createElement);
+  const W = window.wiztri;
+
+  const fmt = (n) => {
+    if (n == null) return '—';
+    if (n >= 1e12) return (n/1e12).toFixed(2) + ' TB';
+    if (n >= 1e9)  return (n/1e9).toFixed(1) + ' GB';
+    if (n >= 1e6)  return (n/1e6).toFixed(1) + ' MB';
+    if (n >= 1e3)  return (n/1e3).toFixed(1) + ' KB';
+    return n + ' B';
+  };
+
+  // ---- Squarified treemap ----
+  function squarify(sizes, x, y, w, h) {
+    const out = [];
+    if (!sizes.length) return out;
+    const total = sizes.reduce((a, b) => a + b, 0);
+    if (total <= 0) return out;
+    const vals = sizes.map(s => s / total * (w * h)).sort((a, b) => b - a);
+    const worst = (row, side) => {
+      if (!row.length) return Infinity;
+      const s = row.reduce((a, b) => a + b, 0);
+      const mn = Math.min(...row), mx = Math.max(...row);
+      return Math.max(side * side * mx / (s * s), s * s / (side * side * mn));
+    };
+    const fillRow = (row, r) => {
+      const s = row.reduce((a, b) => a + b, 0);
+      if (r.w >= r.h) {
+        let y = r.y;
+        for (const v of row) { out.push({ x: r.x, y, w: r.w, h: v / r.w }); y += v / r.w; }
+        return { x: r.x, y, w: r.w, h: r.h - (y - r.y) };
+      } else {
+        let x = r.x;
+        for (const v of row) { out.push({ x, y: r.y, w: v / r.h, h: r.h }); x += v / r.h; }
+        return { x, y: r.y, w: r.w - (x - r.x), h: r.h };
+      }
+    };
+    let r = { x, y, w, h }, i = 0;
+    while (i < vals.length) {
+      const side = Math.min(r.w, r.h);
+      const row = [vals[i]];
+      let cur = worst(row, side);
+      let j = i + 1;
+      while (j < vals.length) {
+        const wj = worst([...row, vals[j]], side);
+        if (wj <= cur) { row.push(vals[j]); cur = wj; j++; } else break;
+      }
+      r = fillRow(row, r);
+      i = j;
+    }
+    return out;
+  }
+
+  // Palet treemap yang harmonis (amber → teal → biru → slate)
+  const TILES = ['#FFB454', '#3FD6CB', '#2E8FB8', '#43618F', '#33415E'];
+  const MUTED = '#28364F';
+  const tileColor = (i, isAgg) => isAgg ? MUTED : TILES[i % TILES.length];
+  const tileDark = (c) => c === '#FFB454' || c === '#3FD6CB';
+
+  function Row({ node, depth, total, expanded, selected, metric, onToggle, onSelect }) {
+    const isDir = Array.isArray(node.children);
+    const val = metric === 'alloc' ? node.alloc : node.size;
+    const pct = total > 0 ? (val / total) * 100 : 0;
+    const open = expanded.has(node);
+    return html`
+      <React.Fragment>
+        <tr className="${selected === node ? 'sel' : ''}" onClick="${() => onSelect(node)}">
+          <td>
+            <span className="spacer" style="${{ width: depth * 18 }}"/>
+            ${isDir
+              ? html`<span className="tw" onClick="${(e) => { e.stopPropagation(); onToggle(node); }}">${open ? '▾' : '▸'}</span>`
+              : html`<span className="tw"/>`}
+            ${node.name}
+            ${node.error ? html`<span className="mark err" title="${node.error}"/>` : null}
+            ${node.hidden ? html`<span className="mark hidden" title="tersembunyi/sistem"/>` : null}
+            ${node.symlink ? html`<span className="mark sym" title="symlink/junction"/>` : null}
+          </td>
+          <td className="num">${fmt(val)}</td>
+          <td className="pct">${pct.toFixed(pct < 1 && pct > 0 ? 2 : 1)}%</td>
+          <td><span className="sizebar" style="${{ width: Math.min(120, pct * 1.2) }}"/></td>
+        </tr>
+        ${open ? (node.children || []).map(c => html`
+          <${Row} key="${depth + ':' + c.name}" node="${c}" depth="${depth + 1}" total="${total}"
+                 expanded="${expanded}" selected="${selected}" metric="${metric}"
+                 onToggle="${onToggle}" onSelect="${onSelect}"/>`) : null}
+      </React.Fragment>`;
+  }
+
+  function App() {
+    const [root, setRoot] = useState('C:\\');
+    const [busy, setBusy] = useState(false);
+    const [tree, setTree] = useState(null);
+    const [expanded, setExpanded] = useState(new Set());
+    const [selected, setSelected] = useState(null);
+    const [metric, setMetric] = useState('size');
+    const [prog, setProg] = useState(null);
+
+    useEffect(() => {
+      if (!W) return;
+      return W.onProgress((d) => setProg(d));
+    }, []);
+
+    const total = tree ? tree.size : 0;
+    const totalAlloc = tree ? (tree.alloc || 0) : 0;
+
+    const items = useMemo(() => {
+      if (!tree) return 0;
+      let c = 0;
+      (function walk(n) { c++; (n.children || []).forEach(walk); })(tree);
+      return c;
+    }, [tree]);
+
+    async function run(p) {
+      setBusy(true); setProg(null); setSelected(null); setExpanded(new Set());
+      try {
+        const t = W
+          ? await W.scan(p)
+          : await fetch('/api/scan?root=' + encodeURIComponent(p)).then(r => { if (!r.ok) throw new Error('scan failed'); return r.json(); });
+        setTree(t);
+      } catch (e) {
+        setTree({ name: p, error: String(e), size: 0, children: [] });
+      } finally { setBusy(false); setProg(null); }
+    }
+
+    function toggle(n) {
+      setExpanded(prev => { const s = new Set(prev); if (s.has(n)) s.delete(n); else s.add(n); return s; });
+    }
+    function select(n) {
+      if (n._agg) return;
+      setSelected(n);
+      if (Array.isArray(n.children)) setExpanded(prev => new Set(prev).add(n));
+    }
+
+    const tmNode = useMemo(() => {
+      return (tree && selected && Array.isArray(selected.children)) ? selected : tree;
+    }, [tree, selected]);
+
+    const tmItems = useMemo(() => {
+      const kids = tmNode ? (tmNode.children || []) : [];
+      let list = kids.map(n => ({ node: n, v: metric === 'alloc' ? n.alloc : n.size })).filter(o => o.v > 0);
+      list.sort((a, b) => b.v - a.v);
+      if (list.length > 200) {
+        const top = list.slice(0, 200);
+        const rest = list.slice(200).reduce((s, o) => s + o.v, 0);
+        if (rest > 0) top.push({ node: { name: 'Lainnya', size: rest, alloc: rest, _agg: true }, v: rest });
+        list = top;
+      }
+      return list;
+    }, [tmNode, metric]);
+
+    const tiles = useMemo(() => {
+      if (!tmItems.length) return [];
+      return squarify(tmItems.map(o => o.v), 0, 0, 1, 1);
+    }, [tmItems]);
+
+    return html`
+      <div style="${{ display:'flex', flexDirection:'column', height:'100%' }}">
+        <div className="stripe">
+          <div className="bar">
+            <input type="text" value="${root}" spellCheck="${false}"
+                   aria-label="Path folder atau drive"
+                   onChange="${e => setRoot(e.target.value)}"
+                   onKeyDown="${e => { if (e.key === 'Enter') run(root); }}"/>
+            <button className="btn" disabled="${busy}" onClick="${() => run(root)}">${busy ? 'Memindai…' : 'Scan'}</button>
+            <div className="metric" role="group" aria-label="Metrik">
+              <button className="${metric === 'size' ? 'on' : ''}" onClick="${() => setMetric('size')}">Size</button>
+              <button className="${metric === 'alloc' ? 'on' : ''}" onClick="${() => setMetric('alloc')}">Allocated</button>
+            </div>
+          </div>
+          ${tree ? html`
+            <div className="stats">
+              <div className="stat"><div className="v amber">${fmt(total)}</div><div className="l">Ukuran logis</div></div>
+              <div className="stat"><div className="v teal">${fmt(totalAlloc)}</div><div className="l">Teralokasi</div></div>
+              <div className="stat"><div className="v">${items.toLocaleString()}</div><div className="l">Item</div></div>
+              ${prog ? html`<span className="live">memindai — ${prog.count.toLocaleString()} item</span>` : null}
+            </div>` : null}
+        </div>
+
+        ${!tree ? html`
+          <div className="empty">
+            <div className="glyph" aria-hidden="true">⛁</div>
+            <h1>Mulai dari mana?</h1>
+            <p>Masukkan path folder atau drive, lalu tekan <strong>Scan</strong>. Untuk mode cepat dengan pembacaan <code>${'MFT'}</code> jalankan Wiztri sebagai Administrator.</p>
+            <button className="btn" onClick="${() => run(root)}">Scan ${root}</button>
+          </div>` : html`
+          <div className="cols">
+            <div className="panel left">
+              <table>
+                <thead><tr><th>Nama</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
+                <tbody>
+                  ${(tree.children || []).map(c => html`
+                    <${Row} key="${c.name}" node="${c}" depth="${0}" total="${total}"
+                           expanded="${expanded}" selected="${selected}" metric="${metric}"
+                           onToggle="${toggle}" onSelect="${select}"/>`)}
+                </tbody>
+              </table>
+            </div>
+            <div className="panel right">
+              ${tmItems.length ? html`
+                <div id="tm">
+                  ${tiles.map((t, i) => {
+                    const item = tmItems[i];
+                    const col = tileColor(i, !!item.node._agg);
+                    return html`
+                      <div key="${i}" className="${'tile' + (tileDark(col) ? '' : ' dk')}"
+                           style="${{ left:(t.x*100)+'%', top:(t.y*100)+'%', width:(t.w*100)+'%', height:(t.h*100)+'%', background:col }}"
+                           title="${item.node.name + ' — ' + fmt(item.v)}"
+                           onClick="${() => select(item.node)}">
+                        <span className="t">${item.node.name}</span>
+                      </div>`;
+                  })}
+                </div>` : html`<div className="quiet">${selected ? 'Folder kosong' : 'Belum ada data'}</div>`}
+            </div>
+          </div>`}
+
+        <div className="foot">
+          <span>${tree ? (tree.path || tree.name) : ''}</span>
+        </div>
+      </div>`;
+  }
+
+  ReactDOM.createRoot(document.getElementById('app')).render(html`<${App}/>`);
+})();
+</script>
+</body>
+</html>

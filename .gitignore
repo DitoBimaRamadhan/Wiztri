@@ -1,0 +1,21 @@
+# dependensi & build
+node_modules/
+installer/
+rust-scanner/target/
+rust-scanner/.cargo/
+
+# artefak & log
+*.log
+rust-scanner/fake.img
+rust-scanner/scan_out.json
+rust-scanner/dbg.txt
+
+# artefak biner / unduhan sementara
+main.zip
+build/node-v22-win-x64.zip
+build/dist/
+electron.zip
+
+# sistem
+Thumbs.db
+Desktop.ini

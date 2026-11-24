@@ -1,0 +1,47 @@
+{
+  "name": "wiztri",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wiztri — disk usage analyzer desktop app (Electron)",
+  "main": "main.js",
+  "scripts": {
+    "start": "node server.js",
+    "desktop": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.wiztri.app",
+    "productName": "Wiztri",
+    "directories": {
+      "output": "installer"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "public/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "rust-scanner/target/x86_64-pc-windows-gnu/release/wiztri-scan.exe",
+        "to": "wiztri-scan.exe"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "artifactName": "wiztri setup.exe"
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}
