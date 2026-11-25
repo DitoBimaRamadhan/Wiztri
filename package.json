@@ -4,6 +4,7 @@
   "private": true,
   "description": "Wiztri — disk usage analyzer desktop app (Electron)",
   "author": "Dito Bima Ramadhan",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "main.js",
   "scripts": {
     "start": "node server.js",

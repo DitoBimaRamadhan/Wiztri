@@ -4,15 +4,24 @@
 #   2. Set token:  $env:GITHUB_TOKEN="ghp_..."   (atau akan diminta)
 #   3. Jalankan:   powershell -ExecutionPolicy Bypass -File scripts/release.ps1
 param(
-  [string]$Tag = "v0.2.0",
+  [string]$Tag = "",
   [string]$Repo = "DitoBimaRamadhan/Wiztri",
-  [string]$Title = "Wiztri 0.2.0",
-  [string]$Notes = "Rilis Wiztri 0.2.0. Unduh `wiztri setup.exe` (x64, Windows NTFS). Lihat CHANGELOG.md untuk detail.",
+  [string]$Title = "",
+  [string]$Notes = "",
   [string]$Asset = "installer/wiztri setup.exe",
   [string]$AssetName = "wiztri.setup.exe"
 )
 
 $ErrorActionPreference = "Stop"
+
+# Turunkan versi/tag dari package.json agar tidak pernah basi (mis. v0.2.0).
+if (-not $Tag) {
+  $pkg = Get-Content (Join-Path $PSScriptRoot "..\package.json") -Raw | ConvertFrom-Json
+  if (-not $pkg.version) { throw "package.json tak punya 'version'." }
+  $Tag = "v" + $pkg.version
+}
+if (-not $Title) { $Title = "Wiztri " + ($Tag -replace '^v', '') }
+if (-not $Notes) { $Notes = "Rilis Wiztri " + ($Tag -replace '^v', '') + ". Unduh wiztri setup.exe (x64, Windows NTFS). Lihat CHANGELOG.md untuk detail." }
 
 if (-not (Test-Path $Asset)) { throw "Asset tak ditemukan: $Asset - jalankan 'npm run dist' dulu." }
 

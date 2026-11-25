@@ -86,11 +86,12 @@ http.createServer(async (req, res) => {
     }
     try {
       const t = await scan(root);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify(makeSlice(t)));
     } catch (e) {
+      console.error('[scan]', e); // detail hanya ke log internal
       res.writeHead(500, { 'Content-Type': 'text/plain' });
-      res.end(String(e));
+      res.end('scan failed');
     }
     return;
   }

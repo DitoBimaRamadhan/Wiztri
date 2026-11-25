@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Wiztri — penganalisa pemakaian disk untuk Windows. Scan cepat via pembacaan $MFT, treemap, dan tampilan tabel.">
-<title>Wiztri — Analisa Disk Cepat untuk Windows</title>
+<meta name="description" content="Wiztri — a disk usage analyzer for Windows. Fast scanning via raw $MFT reading, treemap, and table views.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self'">
+<title>Wiztri — Fast Disk Analysis for Windows</title>
 <style>
   :root{
     --bg:#0A0F1A; --surface:#101624; --surface2:#16202F; --line:#1F2C40;
@@ -135,30 +136,30 @@
 </style>
 </head>
 <body id="top">
-<a class="skip" href="#main">Lompat ke konten</a>
+<a class="skip" href="#main">Skip to content</a>
 
 <nav class="nav"><div class="wrap nav-in">
   <a class="logo" href="#top"><span class="lg">W</span> Wiztri</a>
   <div class="navlinks">
-    <a href="#fitur">Fitur</a>
-    <a href="#cara">Cara pakai</a>
-    <a href="#unduh">Unduh</a>
-    <a class="nav-cta" href="https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri.setup.exe">⬇ Unduh</a>
+    <a href="#fitur">Features</a>
+    <a href="#cara">How to use</a>
+    <a href="#unduh">Download</a>
+    <a class="nav-cta" href="https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri.setup.exe">⬇ Download</a>
   </div>
 </div></nav>
 
 <main id="main">
 
 <div class="hero"><div class="wrap hero-in">
-  <span class="kicker anim" style="--d:40"><span class="pulse"></span> Analisa Disk untuk Windows</span>
-  <h1 class="anim" style="--d:140">Lihat pemakaian disk<em> sekejap</em></h1>
-  <p class="anim" style="--d:240">Wiztri membaca <code>$MFT</code> NTFS secara mentah untuk memindai seluruh drive dalam hitungan detik — dengan tabel dan treemap yang jernih.</p>
+  <span class="kicker anim" style="--d:40"><span class="pulse"></span> Disk analysis for Windows</span>
+  <h1 class="anim" style="--d:140">See your disk usage<em> in a blink</em></h1>
+  <p class="anim" style="--d:240">Wiztri reads the NTFS <code>$MFT</code> raw to scan an entire drive in seconds — with a clear table and treemap.</p>
   <div class="cta anim" style="--d:340">
-    <a class="btn" href="https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri.setup.exe">⬇ Unduh untuk Windows
+    <a class="btn" href="https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri.setup.exe">⬇ Download for Windows
       <span class="arr">↓</span> <small>wiztri.setup.exe</small></a>
-    <a class="btn ghost" href="https://github.com/DitoBimaRamadhan/Wiztri">Lihat kode sumber</a>
+    <a class="btn ghost" href="https://github.com/DitoBimaRamadhan/Wiztri">View source</a>
   </div>
-  <div class="win-note anim" style="--d:420">Jalankan sebagai <strong>Administrator</strong> untuk mode scan MFT tercepat.</div>
+  <div class="win-note anim" style="--d:420">Run as <strong>Administrator</strong> for the fastest MFT scan mode.</div>
 
   <div class="window anim" style="--d:480" aria-hidden="true">
     <div class="winbar">
@@ -180,7 +181,7 @@
         <div class="tile dk" style="--i:2;left:68%;top:0;width:32%;height:38%;background:#2E8FB8">Program Files</div>
         <div class="tile" style="--i:3;left:0;top:52%;width:44%;height:48%;background:conic-gradient(#43B5A6,#3FD6CB)">Rust</div>
         <div class="tile dk" style="--i:4;left:44%;top:52%;width:24%;height:48%;background:#43618F">pagefile</div>
-        <div class="tile dk" style="--i:5;left:68%;top:38%;width:32%;height:62%;background:#33415E">Lainnya</div>
+        <div class="tile dk" style="--i:5;left:68%;top:38%;width:32%;height:62%;background:#33415E">Others</div>
       </div></div>
     </div>
   </div>
@@ -188,45 +189,45 @@
 
 <section id="fitur"><div class="wrap">
   <div class="sec-head reveal">
-    <span class="sec-eyebrow">Fitur</span>
-    <h2>Kenapa Wiztri?</h2>
-    <p class="lead">Dibangun untuk menemukan apa yang memakan ruang disk Anda dengan cepat dan tanpa ribet.</p>
+    <span class="sec-eyebrow">Features</span>
+    <h2>Why Wiztri?</h2>
+    <p class="lead">Built to find what is eating your disk space — fast, and without the hassle.</p>
   </div>
   <div class="featgrid">
-    <div class="card reveal"><div class="ic" aria-hidden="true">⚡</div><h3>Scan cepat via MFT</h3><p>Pembacaan mentah <code>$MFT</code> (Rust) memindai drive dalam hitungan detik — jauh lebih cepat daripada walk biasa.</p></div>
-    <div class="card reveal"><div class="ic" aria-hidden="true">◫</div><h3>Treemap &amp; tabel</h3><p>Proporsi ukuran divisualisasikan sebagai treemap squarified, dengan tabel terurut (Size / Allocated).</p></div>
-    <div class="card reveal"><div class="ic" aria-hidden="true">💽</div><h3>Dropdown drive</h3><p>Pilih drive A:–Z: langsung dari dropdown — tanpa mengetik path.</p></div>
-    <div class="card reveal"><div class="ic" aria-hidden="true">📂</div><h3>Buka di Explorer</h3><p>Satu klik (↗) untuk membuka folder/file di Windows Explorer.</p></div>
-    <div class="card reveal"><div class="ic" aria-hidden="true">🛡</div><h3>Penanda sistem</h3><p>Folder tersembunyi/sistem, symlink/junction, dan error akses ditandai jelas.</p></div>
-    <div class="card reveal"><div class="ic" aria-hidden="true">🔌</div><h3>Offline &amp; privat</h3><p>Data tidak meninggalkan komputer Anda. Tanpa akun, tanpa cloud.</p></div>
+    <div class="card reveal"><div class="ic" aria-hidden="true">⚡</div><h3>Fast MFT scan</h3><p>Raw <code>$MFT</code> reading (Rust) scans a drive in seconds — far faster than a normal walk.</p></div>
+    <div class="card reveal"><div class="ic" aria-hidden="true">◫</div><h3>Treemap &amp; table</h3><p>Size proportions visualized as a squarified treemap, alongside a sortable table (Size / Allocated).</p></div>
+    <div class="card reveal"><div class="ic" aria-hidden="true">💽</div><h3>Drive dropdown</h3><p>Pick drive A:–Z: straight from the dropdown — no path typing.</p></div>
+    <div class="card reveal"><div class="ic" aria-hidden="true">📂</div><h3>Open in Explorer</h3><p>One click (↗) to open a folder or file in Windows Explorer.</p></div>
+    <div class="card reveal"><div class="ic" aria-hidden="true">🛡</div><h3>System markers</h3><p>Hidden/system folders, symlinks/junctions, and access errors are clearly flagged.</p></div>
+    <div class="card reveal"><div class="ic" aria-hidden="true">🔌</div><h3>Offline &amp; private</h3><p>Your data never leaves the computer. No account, no cloud.</p></div>
   </div>
 </div></section>
 
 <section id="cara"><div class="wrap">
   <div class="sec-head reveal">
-    <span class="sec-eyebrow">Cara pakai</span>
-    <h2>Mulai dalam 3 langkah</h2>
-    <p class="lead">Semudah menjalankan installer dan menekan tombol Scan.</p>
+    <span class="sec-eyebrow">How to use</span>
+    <h2>Get started in 3 steps</h2>
+    <p class="lead">As simple as running the installer and pressing Scan.</p>
   </div>
   <div class="steps">
-    <div class="step reveal"><h3>Unduh &amp; install</h3><p>Jalankan <code>wiztri.setup.exe</code>, lalu ikuti petunjuk installer (NSIS).</p></div>
-    <div class="step reveal"><h3>Jalankan sebagai Administrator</h3><p>Klik kanan → <em>Run as administrator</em> untuk mengaktifkan mode scan MFT cepat.</p></div>
-    <div class="step reveal"><h3>Pilih drive &amp; Scan</h3><p>Pilih drive dari dropdown, tekan <strong>Scan</strong>, lalu jelajahi hasilnya.</p></div>
+    <div class="step reveal"><h3>Download &amp; install</h3><p>Run <code>wiztri.setup.exe</code> and follow the installer (NSIS).</p></div>
+    <div class="step reveal"><h3>Run as Administrator</h3><p>Right-click → <em>Run as administrator</em> to enable the fast MFT scan mode.</p></div>
+    <div class="step reveal"><h3>Pick a drive &amp; Scan</h3><p>Select a drive from the dropdown, press <strong>Scan</strong>, then explore the results.</p></div>
   </div>
 </div></section>
 
 <section id="unduh"><div class="wrap">
   <div class="sec-head reveal">
-    <span class="sec-eyebrow">Unduh</span>
-    <h2>Dapatkan Wiztri</h2>
-    <p class="lead">Rilis terbaru tersedia di GitHub.</p>
+    <span class="sec-eyebrow">Download</span>
+    <h2>Get Wiztri</h2>
+    <p class="lead">The latest release is available on GitHub.</p>
   </div>
   <div class="dl reveal">
-    <div class="info"><b>Wiztri 0.3.0</b><span>Installer Windows x64 · NSIS · ±82 MB · scan lazy C:\/D:\</span></div>
-    <a class="btn" href="https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri.setup.exe">⬇ Unduh
+    <div class="info"><b>Wiztri 0.3.0</b><span>Windows x64 installer · NSIS · ±82 MB · lazy scan for C:\ / D:\</span></div>
+    <a class="btn" href="https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri.setup.exe">⬇ Download
       <span class="arr">↓</span> <small>wiztri.setup.exe</small></a>
   </div>
-  <p class="lead reveal" style="margin-top:30px">Unduh lewat terminal:</p>
+  <p class="lead reveal" style="margin-top:30px">Download from the terminal:</p>
   <div class="cmd-label reveal">PowerShell</div>
   <div class="cmd reveal">Invoke-WebRequest -Uri "https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri.setup.exe" -OutFile wiztri.setup.exe</div>
   <div class="cmd-label reveal">CMD</div>
@@ -238,7 +239,7 @@
 </main>
 
 <footer><div class="wrap footrow">
-  <span>© 2026 <strong>DeBeeR</strong> — All rights reserved. <a href="https://github.com/DitoBimaRamadhan/Wiztri/blob/main/LICENSE">Lisensi</a></span>
+  <span>© 2026 <strong>DeBeeR</strong> — All rights reserved. <a href="https://github.com/DitoBimaRamadhan/Wiztri/blob/main/LICENSE">License</a></span>
   <span class="right2">Wiztri · <a href="https://github.com/DitoBimaRamadhan/Wiztri">GitHub</a></span>
 </div></footer>
 
