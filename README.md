@@ -6,14 +6,14 @@ Disk usage analyzer untuk Windows, gaya WizTree/TreeSize. Membaca `$MFT` (NTFS) 
 
 ## Fitur
 
-- **Mode cepat (MFT)** — scan via pembacaan mentah `$MFT` di Rust untuk drive maupun folder mana pun; butuh hak Administrator.
-- **Fallback Node** — walk sistem file (`fs.readdir` paralel) saat MFT tak bisa dibuka (tanpa admin / bukan NTFS).
+- **Mode cepat (MFT)** — scan via pembacaan mentah `$MFT` di Rust untuk drive maupun folder mana pun; butuh hak Administrator. Scanner berjalan sebagai server persisten: `$MFT` dibaca sekali per drive lalu melayani scan subfolder/ekspansi tanpa membaca ulang volume.
+- **Fallback Node** — walk sistem file (`fs.readdir` paralel, single-pass) saat MFT tak bisa dibuka (tanpa admin / bukan NTFS).
 - **Treemap squarified** — visualisasi proporsi ukuran; klik baris/warna untuk menelusuri.
 - **Tabel ukuran** — kolom Size / Allocated, persentase, bar ukuran; expand/collapse folder.
 - **Dropdown drive** — pilih drive A:–Z: tanpa mengetik.
 - **Buka di Explorer** — tombol ↔� per baris membuka folder/file di Windows Explorer.
 - **Penanda** — folder tersembunyi/sistem, symlink/junction, error akses.
-- **Live progress** — persentase + jumlah item saat memindai (mode fallback Node).
+- **Live progress** — jumlah item saat memindai (mode MFT & fallback Node).
 - **Lazy loading** — tree penuh di-cache di proses utama; UI memuat anak folder sesuai kebutuhan, sehingga drive dengan jutaan file (mis. `C:\`) tetap responsif saat menyusuri folder.
 - Offline, tanpa CDN font, UI gelap berbahasa Indonesia.
 
@@ -21,7 +21,7 @@ Disk usage analyzer untuk Windows, gaya WizTree/TreeSize. Membaca `$MFT` (NTFS) 
 
 ```
 main.js            Proses utama Electron: IPC, spawn scanner MFT, fallback Node scan
-preload.js         contextBridge — expose window.wiztri {scan, listDrives, openPath, onProgress}
+preload.js         contextBridge — expose window.wiztri {scan, listDrives, openPath, onProgress, isAdmin}
 public/index.html   Renderer React (inline, htm + React CDN lokal) — grid + treemap
 rust-scanner/      Scanner $MFT dalam Rust → wiztri-scan.exe (dibundel via extraResources)
 server.js          Mode web (developer): GET /api/scan?root=… (tanpa Electron)
