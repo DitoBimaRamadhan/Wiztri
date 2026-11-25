@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -148,7 +148,7 @@
   .tw { transition:color .12s; } .tw:hover { color:var(--teal); }
   tr.more { color:var(--teal); font-size:12px; }
   tr.more:hover td { background:var(--teal-soft); }
-  .tile { border-radius:5px; animation:tileIn .45s cubic-bezier(.2,.7,.3,1) backwards; animation-delay:calc(var(--i,0) * 24ms); transition:filter .14s, transform .18s cubic-bezier(.2,.7,.3,1), box-shadow .18s; }
+  .tile { border-radius:5px; animation:tileIn .45s cubic-bezier(.2,.7,.3,1) backwards; animation-delay:calc(min(var(--i,0), 10) * 24ms); transition:filter .14s, transform .18s cubic-bezier(.2,.7,.3,1), box-shadow .18s; }
   .tile:hover { filter:brightness(1.18); transform:scale(1.015); box-shadow:0 6px 18px rgba(0,0,0,.35); z-index:3; }
   @keyframes tileIn { from { opacity:0; transform:scale(.85); } to { opacity:1; transform:scale(1); } }
   .empty .glyph { animation:float 3.4s ease-in-out infinite; }
@@ -259,13 +259,13 @@
           <td>
             <span className="spacer" style="${{ width: depth * 18 }}"/>
             ${isDir
-              ? html`<button className="tw" aria-label="${open ? 'Tutup folder' : 'Buka folder'}" onClick="${(e) => { e.stopPropagation(); onToggle(node); }}">${open ? '▾' : '▸'}</button>`
+              ? html`<button className="tw" aria-label="${open ? 'Collapse folder' : 'Expand folder'}" onClick="${(e) => { e.stopPropagation(); onToggle(node); }}">${open ? '▾' : '▸'}</button>`
               : html`<span className="tw"/>`}
             ${node.name}
             ${node.error ? html`<span className="mark err" title="${node.error}"/>` : null}
-            ${node.hidden ? html`<span className="mark hidden" title="tersembunyi/sistem"/>` : null}
+            ${node.hidden ? html`<span className="mark hidden" title="hidden/system"/>` : null}
             ${node.symlink ? html`<span className="mark sym" title="symlink/junction"/>` : null}
-            <button className="open" title="Buka di Explorer" aria-label="Buka di Explorer" onClick="${openPath}">↗</button>
+            <button className="open" title="Open in Explorer" aria-label="Open in Explorer" onClick="${openPath}">↗</button>
           </td>
           <td className="num">${fmt(val)}</td>
           <td className="pct">${pct.toFixed(pct < 1 && pct > 0 ? 2 : 1)}%</td>
@@ -279,8 +279,8 @@
                      onShowAll="${onShowAll}" basePath="${ownPath}"/>`)
           : null}
         ${open && node.children && !node._showAll && node.children.length > MAX_ROWS
-          ? html`<tr className="more" onClick="${() => onShowAll(node)}">
-              <td colspan="4">⋯ dan ${node.children.length - MAX_ROWS} lainnya — Tampilkan semua</td>
+          ? html`<tr className="more" tabIndex="0" role="button" onClick="${() => onShowAll(node)}" onKeyDown="${(e) => { if (e.key==='Enter'||e.key===' ') onShowAll(node); }}">
+              <td colspan="4">⋯ and ${node.children.length - MAX_ROWS} more — Show all</td>
             </tr>`
           : null}
       </React.Fragment>`;
@@ -380,7 +380,7 @@
       if (list.length > 200) {
         const top = list.slice(0, 200);
         const rest = list.slice(200).reduce((s, o) => s + o.v, 0);
-        if (rest > 0) top.push({ node: { name: 'Lainnya', size: rest, alloc: rest, _agg: true }, v: rest });
+        if (rest > 0) top.push({ node: { name: 'Others', size: rest, alloc: rest, _agg: true }, v: rest });
         list = top;
       }
       return list;
@@ -396,46 +396,46 @@
         <div className="stripe">
           <div className="bar">
             ${drives.length ? html`
-              <select className="drive" aria-label="Pilih drive" value="${root}"
+              <select className="drive" aria-label="Select drive" value="${root}"
                       onChange="${e => { const v = e.target.value; setRoot(v); run(v); }}">
                 ${drives.map(d => html`<option key="${d}" value="${d + '\\'}">${d}</option>`)}
               </select>` : null}
             <input type="text" value="${root}" spellCheck="${false}"
-                   aria-label="Path folder atau drive"
+                   aria-label="Folder path or drive"
                    onChange="${e => setRoot(e.target.value)}"
                    onKeyDown="${e => { if (e.key === 'Enter') run(root); }}"/>
-            <button className="btn" disabled="${busy}" onClick="${() => run(root)}">${busy ? html`<span class="spin"></span> Memindai…` : 'Scan'}</button>
-            <div className="metric" role="group" aria-label="Metrik">
+            <button className="btn" disabled="${busy}" onClick="${() => run(root)}">${busy ? html`<span class="spin"></span> Scanning…` : 'Scan'}</button>
+            <div className="metric" role="group" aria-label="Metric">
               <button className="${metric === 'size' ? 'on' : ''}" onClick="${() => setMetric('size')}">Size</button>
               <button className="${metric === 'alloc' ? 'on' : ''}" onClick="${() => setMetric('alloc')}">Allocated</button>
             </div>
           </div>
           ${tree ? html`
             <div className="stats">
-              <div className="stat"><div className="v amber">${fmt(logicalTotal)}</div><div className="l">Ukuran logis</div></div>
-              <div className="stat"><div className="v teal">${fmt(allocTotal)}</div><div className="l">Teralokasi</div></div>
-              <div className="stat"><div className="v">${items.toLocaleString()}</div><div className="l">Item</div></div>
+              <div className="stat"><div className="v amber">${fmt(logicalTotal)}</div><div className="l">Logical Size</div></div>
+              <div className="stat"><div className="v teal">${fmt(allocTotal)}</div><div className="l">Allocated</div></div>
+              <div className="stat"><div className="v">${items.toLocaleString()}</div><div className="l">Items</div></div>
               ${prog ? html`
                 <span className="${'live' + (busy ? ' scan' : '')}">
                   ${prog.total > 0 ? html`
                     <span className="pct">${Math.min(100, Math.round(prog.count / prog.total * 100))}%</span>
                     <span className="track"><i style="${{ width: Math.min(100, prog.count / prog.total * 100) + '%' }}"/></span>` : null}
-                  <span className="txt">${prog.count.toLocaleString()}${prog.total > 0 ? ' / ' + prog.total.toLocaleString() : ''} item</span>
+                  <span className="txt">${prog.count.toLocaleString()}${prog.total > 0 ? ' / ' + prog.total.toLocaleString() : ''} items</span>
                 </span>` : null}
             </div>` : null}
         </div>
 
         ${!tree ? html`
-          <div className="empty">
+          <div className="empty" role="status" aria-live="polite">
             <div className="glyph" aria-hidden="true">⛁</div>
-            <h1>Mulai dari mana?</h1>
-            <p>Masukkan path folder atau drive, lalu tekan <strong>Scan</strong>. Untuk pemindaian penuh (termasuk folder terproteksi seperti <code>System Volume Information</code>) via <code>MFT</code>, jalankan Wiztri sebagai Administrator.</p>
+            <h1>Where to start?</h1>
+            <p>Enter a folder path or drive, then press <strong>Scan</strong>. For full scans (including protected folders like <code>System Volume Information</code>) via <code>MFT</code>, run Wiztri as Administrator.</p>
             <button className="btn" onClick="${() => run(root)}">Scan ${root}</button>
           </div>` : html`
           <div className="cols" key="${scanKey}">
             <div className="panel left">
               <table>
-                <thead><tr><th>Nama</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
+                <thead><tr><th>Name</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
                 <tbody>
                   ${(() => {
                     const kids = tree.children || [];
@@ -447,8 +447,8 @@
                              onShowAll="${showAll}" basePath="${tree.path}"/>`);
                   })()}
                   ${tree.children && tree.children.length > MAX_ROWS && !showRootMore ? html`
-                    <tr className="more" onClick="${() => setShowRootMore(true)}">
-                      <td colspan="4">⋯ dan ${tree.children.length - MAX_ROWS} lainnya — Tampilkan semua</td>
+                    <tr className="more" tabIndex="0" role="button" onClick="${() => setShowRootMore(true)}" onKeyDown="${(e) => { if (e.key==='Enter'||e.key===' ') setShowRootMore(true); }}">
+                      <td colspan="4">⋯ and ${tree.children.length - MAX_ROWS} more — Show all</td>
                     </tr>` : null}
                 </tbody>
               </table>
@@ -463,11 +463,12 @@
                       <div key="${i}" className="${'tile' + (tileDark(col) ? '' : ' dk')}"
                            style="${{ left:(t.x*100)+'%', top:(t.y*100)+'%', width:(t.w*100)+'%', height:(t.h*100)+'%', background:col, ['--i']: i }}"
                            title="${item.node.name + ' — ' + fmt(item.v)}"
-                           onClick="${() => select(item.node)}">
+                           onClick="${() => select(item.node)}"
+                           tabIndex="0" role="button" onKeyDown="${(e) => { if (e.key==='Enter'||e.key===' ') select(item.node); }}">
                         <span className="t">${item.node.name}</span>
                       </div>`;
                   })}
-                </div>` : html`<div className="quiet">${selected ? 'Folder kosong' : 'Belum ada data'}</div>`}
+                </div>` : html`<div className="quiet" role="status" aria-live="polite">${selected ? 'Empty folder' : 'No data yet'}</div>`}
             </div>
           </div>`}
 

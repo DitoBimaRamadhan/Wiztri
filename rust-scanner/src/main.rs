@@ -144,7 +144,7 @@ fn parse_mft_bytes(buf: &[u8]) -> Option<u64> {
 
 fn emit_children(p: u64, by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
                 mem: &HashMap<u64, (u64, u64)>, out: &mut String, depth: usize) {
-    if depth > 64 { return; }
+    if depth > 128 { return; }
     if let Some(ids) = by_parent.get(&p) {
         let mut ids: Vec<usize> = ids.iter().copied().filter(|&i| nodes[i].frn != p).collect();
         ids.sort_by(|&a, &b| {
@@ -290,8 +290,11 @@ fn main() {
         std::process::exit(7);
     }
 
-    let mut nodes: Vec<Node> = Vec::with_capacity((total_recs / 8) as usize);
-    let mut by_parent: HashMap<u64, Vec<usize>> = HashMap::with_capacity(total_recs as usize / 16);
+    // Kapasitas konservatif: jangan reservasi dari batas 300M (bisa alokasi ~2GB
+    // virtual untuk volume kecil). Pakai perkiraan wajar dari ukuran $MFT aktual.
+    let est_nodes = (mft_bytes / (rec_size as u64 * 2)).min(4_000_000) as usize;
+    let mut nodes: Vec<Node> = Vec::with_capacity(est_nodes);
+    let mut by_parent: HashMap<u64, Vec<usize>> = HashMap::with_capacity(est_nodes / 8);
 
     let chunk_recs = rec_size.saturating_mul(2048).clamp(1 << 20, 8 << 20);
     let mut chunk = vec![0u8; chunk_recs];
@@ -335,7 +338,7 @@ fn main() {
     // ---- hitung ukuran agregat (dengan proteksi siklus) ----
     fn calc(p: u64, by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
             mem: &mut HashMap<u64, (u64, u64)>, seen: &mut HashMap<u64, bool>, depth: usize) -> (u64, u64) {
-        if depth > 64 { return (0, 0); }
+        if depth > 128 { return (0, 0); }
         if seen.get(&p).copied().unwrap_or(false) { return (0, 0); }
         if let Some(&v) = mem.get(&p) { return v; }
         seen.insert(p, true);

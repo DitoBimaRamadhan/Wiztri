@@ -19,8 +19,9 @@ let childRef = null;
 function tryMft(args) {
   const exe = path.join(process.resourcesPath, 'wiztri-scan.exe');
   return new Promise((resolve) => {
+    // Temp file mode 0600 (pemilik saja): nama file drive = data sensitif.
     const tmp = path.join(os.tmpdir(), 'wiztri_mft_' + process.pid + '_' + Date.now() + '.json');
-    const ws = fs.createWriteStream(tmp);
+    const ws = fs.createWriteStream(tmp, { mode: 0o600 });
     ws.on('error', () => { try { child.kill(); } catch {} finish(null); }); // gagal tulis temp -> jangan gantung/biarkan orphan
     const child = spawn(exe, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
     childRef = child;
@@ -35,14 +36,19 @@ function tryMft(args) {
     child.stdout.pipe(ws);
     child.on('error', () => finish(null));
     child.on('close', (code) => {
-      ws.end();
-      ws.on('finish', () => {
-        if (code !== 0) return finish(null);
+      if (code !== 0) { try { ws.destroy(); } catch {} return finish(null); }
+      // Jangan bergantung pada 'finish' saja (bisa tak terpicu -> gantung).
+      // Tunggu 'close' stream (terpicu setelah flush/selesai), plus fallback.
+      const read = () => {
         try {
           const j = JSON.parse(fs.readFileSync(tmp, 'utf8'));
           finish(!j || j.error ? null : j);
         } catch { finish(null); }
-      });
+      };
+      ws.end();
+      ws.once('close', read);
+      ws.once('error', () => finish(null));
+      setTimeout(read, 2000).unref(); // jaring pengaman bila 'close' tak datang
     });
     const t = setTimeout(() => { try { child.kill(); } catch {} }, 180000);
     t.unref();
@@ -135,6 +141,7 @@ function tryMftPath(root) {
 // renderer hang/OOM saat memindai root drive seperti C:\ / D:\.
 // ---------------------------------------------------------------------------
 const treeCache = new Map(); // path -> tree penuh berakar di path tsb
+const TREE_CACHE_MAX = 4; // batas entri (LRU) — cegah memori tumbuh tanpa batas
 
 function makeSlice(node) {
   const base = node.path || '';
@@ -145,7 +152,8 @@ function makeSlice(node) {
     alloc: c.alloc ?? c.size ?? 0,
     dir: Array.isArray(c.children),
     symlink: !!c.symlink,
-    hidden: !!c.hidden,
+    // MFT tak menandai hidden -> tandai di sini agar konsisten dgn mode Node.
+    hidden: !!c.hidden || HIDDEN.has(c.name),
     error: c.error || undefined,
   }));
   return {
@@ -171,17 +179,29 @@ function descend(tree, parts) {
   return cur;
 }
 
+// Batas komponen path: "C:\Users" harus TIDAK cocok dgn "C:\UsersData".
+function atBoundary(s, i) { return i >= s.length || s[i] === '\\' || s[i] === '/'; }
+
+function cacheSet(p, tree) {
+  treeCache.set(p, tree);
+  // LRU: pindahkan ke akhir; buang entri tertua bila melebihi batas.
+  if (treeCache.size > TREE_CACHE_MAX) {
+    const oldest = treeCache.keys().next().value;
+    if (oldest !== undefined) treeCache.delete(oldest);
+  }
+}
+
 // Coba layani slice dari cache — path sama atau subtree dari leluhur yang sudah dibangun.
 function sliceFromCache(base) {
   const bb = base.toLowerCase();
   for (const [p, tree] of treeCache) {
     if (!p || typeof p !== 'string') continue;
-    if (base === p) return makeSlice(tree);
+    if (base === p) { cacheSet(p, tree); return makeSlice(tree); } // sentuh -> segarkan LRU
     const pb = p.toLowerCase();
-    if (bb.startsWith(pb)) {
+    if (bb.startsWith(pb) && atBoundary(bb, pb.length)) {
       const rel = base.slice(p.length).split(/[\\\/]+/).filter(Boolean);
       const node = descend(tree, rel);
-      if (node) { treeCache.set(base, node); return makeSlice(node); }
+      if (node) { cacheSet(base, node); return makeSlice(node); }
     }
   }
   return null;
@@ -189,6 +209,8 @@ function sliceFromCache(base) {
 
 ipcMain.handle('scan', async (_evt, root) => {
   const base = root || process.env.SYSTEMDRIVE || 'C:\\';
+  // Validasi: hanya jalur drive lokal (cegah UNC/SSRF & path di luar drive).
+  if (!/^[A-Za-z]:([\\\/]|$)/.test(base)) return { name: base, path: base, size: 0, alloc: 0, dir: true, children: [], error: 'invalid_root' };
   const fromCache = sliceFromCache(base);
   if (fromCache) return fromCache;
 
@@ -196,6 +218,8 @@ ipcMain.handle('scan', async (_evt, root) => {
   const mft = await tryMftPath(base);
   if (mft && !mft.error) {
     full = mft;
+    // MFT tak melaporkan progres -> beri status agar UI tidak tampak diam.
+    _evt.sender.send('scan-progress', { count: 1, total: 1, dir: 'Reading $MFT…' });
   } else {
     // Fallback Node: prescan utk % progres, lalu walk penuh.
     const total = await countNodes(base);
@@ -213,7 +237,7 @@ ipcMain.handle('scan', async (_evt, root) => {
     _evt.sender.send('scan-progress', { count: state.count, total, dir: '' });
   }
 
-  treeCache.set(base, full);
+  cacheSet(base, full);
   return makeSlice(full);
 });
 
@@ -240,18 +264,24 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
-ipcMain.handle('list-drives', () => {
+// Daftar drive lokal (A:..Z: yang ada) — dipakai utk dropdown & validasi path.
+function localDrives() {
   const out = [];
   for (let i = 65; i <= 90; i++) { // A..Z
     const letter = String.fromCharCode(i);
     try { fs.statSync(letter + ':\\'); out.push(letter + ':'); } catch {}
   }
   return out;
-});
+}
+
+ipcMain.handle('list-drives', () => localDrives());
 
 ipcMain.handle('open-path', (_e, target) => {
   try {
     if (!target || typeof target !== 'string') return { ok: false };
+    // Batasi ke drive lokal (cegah renderer membuka path sembarang / UNC).
+    const ok = localDrives().some((d) => target.toUpperCase().startsWith(d.toUpperCase() + '\\') || target.toUpperCase() === d.toUpperCase());
+    if (!ok) return { ok: false };
     const st = fs.statSync(target);
     if (st.isDirectory()) { const err = shell.openPath(target); return { ok: !err }; }
     shell.showItemInFolder(target);
