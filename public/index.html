@@ -187,8 +187,9 @@
   const MUTED = '#28364F';
   const tileColor = (i, isAgg) => isAgg ? MUTED : TILES[i % TILES.length];
   const tileDark = (c) => c === '#FFB454' || c === '#3FD6CB';
+  const MAX_ROWS = 500; // cap render baris per level (cegah freeze/OOM pada folder raksasa)
 
-  function Row({ node, depth, total, expanded, selected, metric, onToggle, onSelect, basePath }) {
+  function Row({ node, depth, total, expanded, selected, metric, onToggle, onSelect, onShowAll, basePath }) {
     const isDir = node.dir === true;
     const val = metric === 'alloc' ? (node.alloc ?? node.size) : node.size;
     const pct = total > 0 ? (val / total) * 100 : 0;
@@ -213,10 +214,18 @@
           <td className="pct">${pct.toFixed(pct < 1 && pct > 0 ? 2 : 1)}%</td>
           <td><span className="sizebar" style="${{ width: Math.min(120, pct * 1.2) }}"/></td>
         </tr>
-        ${open ? (node.children || []).map((c, i) => html`
-          <${Row} key="${depth + ':' + i}" node="${c}" depth="${depth + 1}" total="${total}"
-                 expanded="${expanded}" selected="${selected}" metric="${metric}"
-                 onToggle="${onToggle}" onSelect="${onSelect}" basePath="${ownPath}"/>`) : null}
+        ${open && node.children
+          ? (node._showAll ? node.children : node.children.slice(0, MAX_ROWS)).map((c, i) => html`
+              <${Row} key="${depth + ':' + i}" node="${c}" depth="${depth + 1}" total="${total}"
+                     expanded="${expanded}" selected="${selected}" metric="${metric}"
+                     onToggle="${onToggle}" onSelect="${onSelect}"
+                     onShowAll="${onShowAll}" basePath="${ownPath}"/>`)
+          : null}
+        ${open && node.children && !node._showAll && node.children.length > MAX_ROWS
+          ? html`<tr className="more" onClick="${() => onShowAll(node)}">
+              <td colspan="4">⋯ dan ${node.children.length - MAX_ROWS} lainnya — Tampilkan semua</td>
+            </tr>`
+          : null}
       </React.Fragment>`;
   }
 
@@ -230,6 +239,7 @@
     const [prog, setProg] = useState(null);
     const [drives, setDrives] = useState([]);
     const [err, setErr] = useState(null);
+    const [showRootMore, setShowRootMore] = useState(false);
     const [, bump] = useReducer((x) => x + 1, 0); // paksa re-render setelah muat anak malas
 
     useEffect(() => {
@@ -252,8 +262,11 @@
       return c;
     }, [tree]);
 
+    const showAll = (n) => { n._showAll = true; bump(); };
+
     async function run(p) {
       setBusy(true); setProg(null); setSelected(null); setExpanded(new Set()); setErr(null);
+      setShowRootMore(false);
       try {
         const t = W
           ? await W.scan(p)
@@ -293,7 +306,8 @@
       if (n._agg) return;
       if (n.dir) { await ensureChildren(n); bump(); }
       setSelected(n);
-      if (n.dir) setExpanded(prev => new Set(prev).add(n));
+      // Jangan auto-expand folder raksasa (bisa monolitik commit ribuan baris).
+      if (n.dir && (n.children || []).length <= MAX_ROWS) setExpanded(prev => new Set(prev).add(n));
     }
 
     const tmNode = useMemo(() => {
@@ -364,10 +378,19 @@
               <table>
                 <thead><tr><th>Nama</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
                 <tbody>
-                  ${(tree.children || []).map((c, i) => html`
-                    <${Row} key="${i}" node="${c}" depth="${0}" total="${total}"
-                           expanded="${expanded}" selected="${selected}" metric="${metric}"
-                           onToggle="${toggle}" onSelect="${select}" basePath="${tree.path}"/>`)}
+                  ${(() => {
+                    const kids = tree.children || [];
+                    const shown = kids.length > MAX_ROWS && !showRootMore ? kids.slice(0, MAX_ROWS) : kids;
+                    return shown.map((c, i) => html`
+                      <${Row} key="${i}" node="${c}" depth="${0}" total="${total}"
+                             expanded="${expanded}" selected="${selected}" metric="${metric}"
+                             onToggle="${toggle}" onSelect="${select}"
+                             onShowAll="${showAll}" basePath="${tree.path}"/>`);
+                  })()}
+                  ${tree.children && tree.children.length > MAX_ROWS && !showRootMore ? html`
+                    <tr className="more" onClick="${() => setShowRootMore(true)}">
+                      <td colspan="4">⋯ dan ${tree.children.length - MAX_ROWS} lainnya — Tampilkan semua</td>
+                    </tr>` : null}
                 </tbody>
               </table>
             </div>
