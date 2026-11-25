@@ -6,7 +6,7 @@ Disk usage analyzer untuk Windows, gaya WizTree/TreeSize. Membaca `$MFT` (NTFS) 
 
 ## Fitur
 
-- **Mode cepat (MFT)** — scan via pembacaan mentah `$MFT` di Rust; butuh hak Administrator.
+- **Mode cepat (MFT)** — scan via pembacaan mentah `$MFT` di Rust untuk drive maupun folder mana pun; butuh hak Administrator.
 - **Fallback Node** — walk sistem file (`fs.readdir` paralel) saat MFT tak bisa dibuka (tanpa admin / bukan NTFS).
 - **Treemap squarified** — visualisasi proporsi ukuran; klik baris/warna untuk menelusuri.
 - **Tabel ukuran** — kolom Size / Allocated, persentase, bar ukuran; expand/collapse folder.
@@ -63,7 +63,7 @@ npm run dist
 3. Klik baris untuk menelusuri folder; treemap ikut berpindah.
 4. Gunakan **↗** untuk membuka lokasi di Explorer.
 
-Jika dijalankan tanpa admin, app otomatis memakai fallback Node (lebih lambat, tetap akurat).
+Saat berjalan sebagai admin, MFT juga dipakai untuk scan subfolder — folder terproteksi (System Volume Information, $Recycle.Bin, AppData pengguna lain, dll.) tetap terbaca, jadi tidak ada `access_denied`. Tanpa admin, app otomatis memakai fallback Node (lebih lambat; folder terproteksi akan ditandai `access_denied`).
 
 ## Changelog
 

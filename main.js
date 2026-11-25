@@ -13,21 +13,16 @@ const HIDDEN = new Set([
   '$Extend', 'Config.Msi', 'DumpStack.log.tmp', 'Desktop.ini',
 ]);
 
-function parseDrive(root) {
-  const m = /^([A-Za-z]):/.exec(root || '');
-  return m ? m[1].toUpperCase() : 'C';
-}
-
 // Jalur MFT (Rust). return null bila tak tersedia / tak diizinkan.
 // Streaming ke file temp (hindari maxBuffer) + ref child utk di-kill saat app tutup.
 let childRef = null;
-function tryMft(drive) {
+function tryMft(args) {
   const exe = path.join(process.resourcesPath, 'wiztri-scan.exe');
   return new Promise((resolve) => {
     const tmp = path.join(os.tmpdir(), 'wiztri_mft_' + process.pid + '_' + Date.now() + '.json');
     const ws = fs.createWriteStream(tmp);
     ws.on('error', () => { try { child.kill(); } catch {} finish(null); }); // gagal tulis temp -> jangan gantung/biarkan orphan
-    const child = spawn(exe, [drive], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn(exe, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
     childRef = child;
     let done = false;
     const finish = (val) => {
@@ -117,13 +112,24 @@ async function nodeScan(root, onProgress, state, depth = 0) {
   return { name: path.basename(root) || root, path: root, size, children };
 }
 
+// MFT dipakai utk SEMUA jalur drive lokal (root drive maupun subfolder) —
+// scanner Rust kini menerima arg ke-2 utk memotong tree volume ke subtree
+// yang diminta. Ini mem-bypass ACL folder (System Volume Information,
+// $Recycle.Bin, AppData pengguna lain, dll.) sehingga tak ada access_denied.
+// Bila exe tak tersedia / tanpa admin (gagal), return null -> fallback Node walk.
+function tryMftPath(root) {
+  const m = /^([A-Za-z]):([\\\/].*)?$/.exec(root || '');
+  if (!m) return Promise.resolve(null); // bukan jalur drive lokal -> fallback Node
+  const drive = m[1].toUpperCase();
+  const rest = m[2];
+  const args = [drive];
+  if (rest && !/^[\\\/]+$/.test(rest)) args.push(root.replace(/[\\\/]+$/, ''));
+  return tryMft(args);
+}
+
 ipcMain.handle('scan', async (_evt, root) => {
   const base = root || process.env.SYSTEMDRIVE || 'C:\\';
-  // MFT (wiztri-scan.exe) hanya utk root drive (mis. "C:\"). Untuk subfolder,
-  // scanner akan mengembalikan tree volume penuh — salah. Maka MFT dipakai
-  // hanya bila root persis drive; subfolder langsung fallback Node.
-  const isDriveRoot = /^[A-Za-z]:\\?$/.test(base);
-  const mft = isDriveRoot ? await tryMft(parseDrive(base)) : null;
+  const mft = await tryMftPath(base);
   if (mft) return mft;
   // Prescan: hitung total node utk persentase progres.
   const total = await countNodes(base);

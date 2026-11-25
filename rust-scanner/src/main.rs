@@ -178,9 +178,55 @@ fn emit_children(p: u64, by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
     }
 }
 
+// Cari FRN node yang jalurnya cocok dgn filter (case-insensitive), mulai dari akar.
+// Filter = jalur Windows penuh (mis. "C:\Users\foo"); awalan drive dibuang.
+fn find_node_by_path(root_frn: u64, filter: &str, by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node]) -> Option<u64> {
+    let mut f = filter.replace('/', "\\");
+    if f.len() >= 2 && f.as_bytes()[1] == b':' {
+        f = f[2..].to_string();
+    }
+    let mut cur = root_frn;
+    for part in f.split('\\').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        let low = part.to_lowercase();
+        let mut found = None;
+        if let Some(ids) = by_parent.get(&cur) {
+            for &i in ids {
+                let n = &nodes[i];
+                if n.frn == cur { continue; }
+                if n.name.to_lowercase() == low { found = Some(n.frn); break; }
+            }
+        }
+        cur = found?;
+    }
+    Some(cur)
+}
+
+// Emit JSON subtree berakar di `frn` (nama + path diberi dari luar).
+fn emit_root_node(frn: u64, name: &str, path_label: &str,
+                  by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
+                  mem: &HashMap<u64, (u64, u64)>, out: &mut String) {
+    // Prefer total subtree (mem). Untuk file (bukan folder), pakai ukuran node sendiri.
+    let (mut s, mut a) = mem.get(&frn).copied().unwrap_or((0, 0));
+    if let Some(n) = nodes.iter().find(|n| n.frn == frn) {
+        if !n.is_dir { s = n.size; a = n.alloc; }
+    }
+    out.push_str("{\"name\":\"");
+    esc(name, out);
+    out.push_str("\",\"path\":\"");
+    esc(path_label, out);
+    out.push_str("\",\"size\":");
+    out.push_str(&s.to_string());
+    out.push_str(",\"alloc\":");
+    out.push_str(&a.to_string());
+    out.push_str(",\"children\":[");
+    emit_children(frn, by_parent, nodes, mem, out, 0);
+    out.push_str("]}");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let raw = args.get(1).cloned().unwrap_or_else(|| "C".to_string());
+    let filter = args.get(2).cloned();
     // mode device bila 1 huruf; selain itu anggap path file (mode uji).
     let device_mode = raw.len() == 1 && raw.chars().next().unwrap().is_ascii_alphabetic();
     let target = if device_mode { format!("\\\\.\\{}:", raw.to_uppercase()) } else { raw.clone() };
@@ -313,49 +359,28 @@ fn main() {
 
     let mut mem: HashMap<u64, (u64, u64)> = HashMap::new();
     let mut seen: HashMap<u64, bool> = HashMap::new();
-    let (rsize, ralloc) = calc(5, &by_parent, &nodes, &mut mem, &mut seen, 0);
+    // Akar output: 5 (akar volume) bila tanpa filter; bila ada filter, node yang cocok.
+    let root_frn = match &filter {
+        Some(f) => match find_node_by_path(5, f, &by_parent, &nodes) {
+            Some(frn) => frn,
+            None => { println!("{}", r#"{"error":"path_not_found"}"#); std::process::exit(9); }
+        },
+        None => 5,
+    };
+    calc(root_frn, &by_parent, &nodes, &mut mem, &mut seen, 0);
 
     let mut out = String::with_capacity((nodes.len() * 64).max(1 << 20));
-    let name_label = if device_mode { raw.to_uppercase() } else { raw.clone() };
-    let path_label = if device_mode { format!("{}:", raw.to_uppercase()) } else { raw.clone() };
-    out.push_str("{\"name\":\"");
-    esc(&name_label, &mut out);
-    out.push_str("\",\"path\":\"");
-    esc(&path_label, &mut out);
-    out.push_str("\",\"size\":");
-    out.push_str(&rsize.to_string());
-    out.push_str(",\"alloc\":");
-    out.push_str(&ralloc.to_string());
-    out.push_str(",\"children\":[");
-    if let Some(ids) = by_parent.get(&5) {
-        let mut ids: Vec<usize> = ids.iter().copied().filter(|&i| nodes[i].frn != 5).collect();
-        ids.sort_by(|&a, &b| {
-            let (sa, _) = mem.get(&nodes[a].frn).copied().unwrap_or((nodes[a].size, 0));
-            let (sb, _) = mem.get(&nodes[b].frn).copied().unwrap_or((nodes[b].size, 0));
-            sb.cmp(&sa)
-        });
-        for (i, &idx) in ids.iter().enumerate() {
-            if i > 0 { out.push(','); }
-            let n = &nodes[idx];
-            out.push_str("{\"name\":\"");
-            esc(&n.name, &mut out);
-            out.push_str("\",\"size\":");
-            if n.is_dir {
-                let (s, a) = mem.get(&n.frn).copied().unwrap_or((0, 0));
-                out.push_str(&s.to_string());
-                out.push_str(",\"alloc\":");
-                out.push_str(&a.to_string());
-                out.push_str(",\"children\":[");
-                emit_children(n.frn, &by_parent, &nodes, &mem, &mut out, 0);
-                out.push_str("]}");
-            } else {
-                out.push_str(&n.size.to_string());
-                out.push_str(",\"alloc\":");
-                out.push_str(&n.alloc.to_string());
-                out.push_str("}");
-            }
-        }
+    if root_frn == 5 {
+        let name_label = if device_mode { raw.to_uppercase() } else { raw.clone() };
+        let path_label = if device_mode { format!("{}:", raw.to_uppercase()) } else { raw.clone() };
+        emit_root_node(5, &name_label, &path_label, &by_parent, &nodes, &mem, &mut out);
+    } else if let Some(idx) = nodes.iter().position(|n| n.frn == root_frn) {
+        let n = &nodes[idx];
+        let pl = filter.as_deref().unwrap_or("").replace('/', "\\");
+        emit_root_node(root_frn, &n.name, &pl, &by_parent, &nodes, &mem, &mut out);
+    } else {
+        println!("{}", r#"{"error":"path_not_found"}"#);
+        std::process::exit(9);
     }
-    out.push_str("]}");
     println!("{}", out);
 }
