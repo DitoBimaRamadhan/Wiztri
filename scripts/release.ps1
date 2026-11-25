@@ -1,4 +1,4 @@
-# release.ps1 — buat GitHub Release + upload installer ke repo.
+# release.ps1 - buat GitHub Release + upload installer ke repo.
 # Cara pakai:
 #   1. (opsional) bangun dulu:  npm run dist
 #   2. Set token:  $env:GITHUB_TOKEN="ghp_..."   (atau akan diminta)
@@ -14,7 +14,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if (-not (Test-Path $Asset)) { throw "Asset tak ditemukan: $Asset — jalankan 'npm run dist' dulu." }
+if (-not (Test-Path $Asset)) { throw "Asset tak ditemukan: $Asset - jalankan 'npm run dist' dulu." }
 
 $Token = $env:GITHUB_TOKEN
 if (-not $Token) {
@@ -33,7 +33,7 @@ $headers = @{ Authorization = "Bearer $Token"; Accept = "application/vnd.github+
 # Cek release sudah ada? update : buat
 try {
   $existing = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$Repo/releases/tags/$Tag" -Headers $headers
-  Write-Host "Release '$Tag' sudah ada — update."
+  Write-Host "Release '$Tag' sudah ada - update."
 } catch {
   $body = @{ tag_name = $Tag; name = $Title; body = $Notes; draft = $false; prerelease = $false } | ConvertTo-Json
   $existing = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Repo/releases" -Headers $headers -Body $body -ContentType "application/json"
@@ -49,11 +49,14 @@ foreach ($a in $existing.assets) {
 }
 
 # Upload asset via Invoke-RestMethod (token hanya di memori, tak tampil di cmdline).
-$uploadUrl = $existing.upload_url -replace '\{.*$',''
+# URL upload dibangun deterministik dari id release (hindari parsing upload_url templated).
+$uploadUrl = "https://uploads.github.com/repos/$Repo/releases/$($existing.id)/assets"
 $assetName = $AssetName
 Write-Host "Upload '$assetName' ke release..."
 $file = [System.IO.File]::ReadAllBytes((Resolve-Path $Asset))
-Invoke-RestMethod -Method Post -Uri "$uploadUrl?name=$([uri]::EscapeDataString($assetName))" `
+# Concatenasi eksplisit: interpolasi "$uploadUrl?name=$([uri]::...)" rusak di PS 5.1
+$target = $uploadUrl + '?name=' + [uri]::EscapeDataString($assetName)
+Invoke-RestMethod -Method Post -Uri $target `
   -Headers $headers -ContentType "application/octet-stream" -Body $file | Out-Null
 
 Write-Host ""
