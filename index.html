@@ -81,13 +81,13 @@
   .tile.dk{color:#EAF2FB}
 
   /* ---- sections ---- */
-  section{padding:52px 0}
+  section{padding:44px 0}
   .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:28px;flex-wrap:wrap}
   .sec-eyebrow{font:600 12px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--teal)}
   section h2{font-size:24px;font-weight:740;margin:0;letter-spacing:-.01em}
   .lead{color:var(--dim);max-width:560px;margin:4px 0 0}
   .featgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;position:relative;transition:border-color .18s ease, transform .18s ease}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;position:relative;transition:border-color .18s ease, transform .18s ease}
   .card::before{content:"";position:absolute;inset:0;border-radius:12px;background:linear-gradient(135deg,var(--amber-soft),var(--teal-soft));opacity:0;transition:opacity .2s;pointer-events:none}
   .card:hover{border-color:var(--faint);transform:translateY(-2px)}
   .card:hover::before{opacity:1}
@@ -95,7 +95,7 @@
   .card h3{margin:0 0 5px;font-size:15.5px;font-weight:650}
   .card p{margin:0;color:var(--dim);font-size:13.5px}
   .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;counter-reset:st}
-  .step{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;position:relative}
+  .step{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;position:relative}
   .step::before{counter-increment:st;content:counter(st);position:absolute;top:16px;right:18px;font:700 26px var(--mono);color:var(--surface2)}
   .step h3{margin:0 0 5px;font-size:15px;font-weight:650}
   .step p{margin:0;color:var(--dim);font-size:13.5px}
@@ -222,7 +222,7 @@
     <p class="lead">Rilis terbaru tersedia di GitHub.</p>
   </div>
   <div class="dl reveal">
-    <div class="info"><b>Wiztri 0.2.0</b><span>Installer Windows x64 · NSIS · ±78 MB</span></div>
+    <div class="info"><b>Wiztri 0.3.0</b><span>Installer Windows x64 · NSIS · ±82 MB · scan lazy C:\/D:\</span></div>
     <a class="btn" href="https://github.com/DitoBimaRamadhan/Wiztri/releases/latest/download/wiztri.setup.exe">⬇ Unduh
       <span class="arr">↓</span> <small>wiztri.setup.exe</small></a>
   </div>
