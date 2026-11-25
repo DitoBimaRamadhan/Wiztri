@@ -11,7 +11,7 @@
 <style>
   :root {
     --bg:#0B1220; --surface:#101B2C; --surface2:#152437; --line:#21334F;
-    --text:#E6EDF6; --dim:#8DA1BC; --faint:#5E738F;
+    --text:#E6EDF6; --dim:#8DA1BC; --faint:#7C90AE; /* faint dinaikkan: kontras >=4.5:1 */
     --amber:#FFB454; --teal:#3FD6CB; --red:#FF6B6B;
     --sel:#0F2233; --focus:#3FD6CB;
     --fs-base:13px; --fs-label:12px; --fs-stat:22px; --fs-title:15px;
@@ -42,8 +42,8 @@
   .drive:hover { border-color:var(--faint); }
   .open {
     background:transparent; border:0; color:var(--faint); cursor:pointer;
-    font-size:13px; padding:2px 6px; border-radius:5px; line-height:1;
-    margin-left:6px; vertical-align:middle;
+    font-size:13px; padding:6px 9px; border-radius:6px; line-height:1;
+    margin-left:6px; vertical-align:middle; min-width:26px; min-height:26px;
   }
   .open:hover { color:var(--teal); background:var(--surface2); }
   .btn {
@@ -250,11 +250,16 @@
     const openPath = (e) => { e.stopPropagation(); if (W && W.openPath) W.openPath(ownPath); };
     return html`
       <React.Fragment>
-        <tr className="${selected === node ? 'sel' : ''}" onClick="${() => onSelect(node)}">
+        <tr className="${selected === node ? 'sel' : ''}"
+            tabIndex="0"
+            role="row"
+            aria-selected="${selected === node}"
+            onClick="${() => onSelect(node)}"
+            onKeyDown="${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(node); } }}">
           <td>
             <span className="spacer" style="${{ width: depth * 18 }}"/>
             ${isDir
-              ? html`<span className="tw" onClick="${(e) => { e.stopPropagation(); onToggle(node); }}">${open ? '▾' : '▸'}</span>`
+              ? html`<button className="tw" aria-label="${open ? 'Tutup folder' : 'Buka folder'}" onClick="${(e) => { e.stopPropagation(); onToggle(node); }}">${open ? '▾' : '▸'}</button>`
               : html`<span className="tw"/>`}
             ${node.name}
             ${node.error ? html`<span className="mark err" title="${node.error}"/>` : null}
