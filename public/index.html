@@ -122,7 +122,9 @@
   }
   body { -webkit-font-smoothing:antialiased; }
   .stripe { background:color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
-  .admin-banner { padding:7px 14px; font-size:var(--fs-label); color:#241503; background:var(--amber); border-bottom:1px solid var(--line); }
+  .admin-banner { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 14px; font-size:var(--fs-label); color:#241503; background:var(--amber); border-bottom:1px solid var(--line); }
+  .admin-banner .tw-admin { margin-left:auto; padding:4px 12px; border-radius:6px; border:0; background:#241503; color:var(--amber); font-weight:650; cursor:pointer; }
+  .engine { font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--dim); border:1px solid var(--line); padding:2px 8px; border-radius:999px; align-self:center; }
   .bar { padding:9px 14px; }
   .bar input[type=text] { padding:7px 12px; border-radius:var(--r-sm); transition:border-color .15s, box-shadow .15s; }
   .bar input[type=text]:focus { box-shadow:0 0 0 3px var(--teal-soft); }
@@ -341,6 +343,7 @@
     const [filter, setFilter] = useState('');
     const [isAdmin, setIsAdmin] = useState(true);
     const [note, setNote] = useState(null);
+    const [engine, setEngine] = useState('node'); // 'mft' | 'node'
     const scanToken = useRef(0); // naik tiap scan baru -> buang hasil basi
     const [, bump] = useReducer((x) => x + 1, 0); // paksa re-render setelah muat anak malas
 
@@ -405,6 +408,7 @@
         setScanKey((k) => k + 1);
         if (n && n.error) setErr(String(n.error));
         if (n && n.note) setNote(String(n.note));
+        if (n && n.engine) setEngine(n.engine);
       } catch (e) {
         if (tok !== scanToken.current) return;
         setErr(String(e));
@@ -482,7 +486,11 @@
 
     return html`
       <div style="${{ display:'flex', flexDirection:'column', height:'100%' }}">
-        ${!isAdmin ? html`<div className="admin-banner" role="status">⚠ Mode non-admin — folder terproteksi (System Volume Information, $Recycle.Bin, dll.) tidak tampil. Jalankan sebagai Administrator untuk hasil penuh.</div>` : null}
+        ${!isAdmin ? html`
+          <div className="admin-banner" role="status">
+            <span>⚠ Mode non-admin — kecepatan penuh butuh MFT; folder terproteksi (System Volume Information, $Recycle.Bin, dll.) tidak tampil.</span>
+            ${W && W.relaunchAdmin ? html`<button className="tw-admin" onClick="${() => W.relaunchAdmin()}">Restart as Administrator</button>` : null}
+          </div>` : null}
         <div className="stripe">
           <div className="bar">
             ${drives.length ? html`
@@ -511,6 +519,7 @@
               <div className="stat"><div className="v amber">${fmt(logicalTotal)}</div><div className="l">Logical Size</div></div>
               <div className="stat"><div className="v teal">${fmt(allocTotal)}</div><div className="l">Allocated</div></div>
               <div className="stat"><div className="v">${items.toLocaleString()}</div><div className="l">Items</div></div>
+              <div className="engine" role="status" aria-label="Scan engine">${engine === 'mft' ? 'MFT' : 'Fallback'}</div>
               ${prog ? html`
                 <span className="${'live' + (busy ? ' scan' : '')}">
                   ${prog.total > 0 ? html`

@@ -169,6 +169,7 @@ function makeSlice(node) {
     alloc: node.alloc ?? node.size ?? 0,
     dir: true,
     note: node.note,
+    engine: node._engine || 'node',
     children: kids,
   };
 }
@@ -233,7 +234,7 @@ ipcMain.handle('scan', async (_evt, root) => {
         _evt.sender.send('scan-progress', { count, total, dir: 'Reading $MFT…' });
       });
     } catch { mft = null; }
-    if (mft) return mft;
+    if (mft) { mft._engine = 'mft'; return mft; }
 
     // Fallback Node single-pass (indeterminate progress). Tanpa prescan
     // terpisah (P3) — jumlah item dilaporkan seiring jalan.
@@ -248,6 +249,7 @@ ipcMain.handle('scan', async (_evt, root) => {
     c(0, base);
     const fullTree = await nodeScan(base, c, state);
     _evt.sender.send('scan-progress', { count: state.count, total: 0, dir: '' });
+    fullTree._engine = 'node';
     return fullTree;
   };
 
@@ -291,13 +293,27 @@ function localDrives() {
 
 ipcMain.handle('list-drives', () => localDrives());
 
-// Deteksi mode Administrator: probe folder terproteksi. ENOENT (folder tidak
-// ada) -> anggap admin; EACCES/EPERM -> bukan admin (MFT akan gagal).
+// Deteksi mode Administrator: coba buka raw volume \\.\C: — persis yang
+// dilakukan scanner MFT. Berhasil -> admin (MFT bisa jalan); gagal -> bukan.
 function isAdmin() {
-  try { fs.readdirSync('C:\\System Volume Information'); return true; }
-  catch (e) { return e.code !== 'ENOENT'; }
+  try { const fd = fs.openSync('\\\\.\\C:', 'r'); fs.closeSync(fd); return true; }
+  catch { return false; }
 }
 ipcMain.handle('is-admin', () => isAdmin());
+
+// Relaunch sebagai Administrator (UAC prompt), lalu tutup sesi non-admin.
+ipcMain.handle('relaunch-admin', () => {
+  try {
+    const argClause = app.isPackaged ? "''" : ("'" + __dirname + "'");
+    const script = `Start-Process -FilePath "${process.execPath}" -ArgumentList ${argClause} -Verb RunAs`;
+    const c = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', script],
+      { windowsHide: true, detached: true, stdio: 'ignore' });
+    c.unref();
+    // Sesi non-admin ditutup sebentar lagi; UAC prompt muncul di proses baru.
+    setTimeout(() => { try { app.quit(); } catch {} }, 1500);
+    return { ok: true };
+  } catch { return { ok: false }; }
+});
 
 ipcMain.handle('open-path', (_e, target) => {
   try {
