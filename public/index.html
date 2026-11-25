@@ -125,6 +125,12 @@
   .admin-banner { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 14px; font-size:var(--fs-label); color:#241503; background:var(--amber); border-bottom:1px solid var(--line); }
   .admin-banner .tw-admin { margin-left:auto; padding:4px 12px; border-radius:6px; border:0; background:#241503; color:var(--amber); font-weight:650; cursor:pointer; }
   .engine { font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--dim); border:1px solid var(--line); padding:2px 8px; border-radius:999px; align-self:center; }
+  .all-wrap { display:flex; flex-direction:column; height:100%; min-height:0; }
+  .all-total { padding:6px 10px; font-size:var(--fs-label); color:var(--dim); border-bottom:1px solid var(--line); flex:0 0 auto; }
+  .all { width:100%; border-collapse:collapse; overflow-y:auto; }
+  .all th, .all td { padding:3px 8px; text-align:left; white-space:nowrap; }
+  .all td.dim-path { color:var(--dim); max-width:360px; overflow:hidden; text-overflow:ellipsis; }
+  .all td.num { text-align:right; }
   .bar { padding:9px 14px; }
   .bar input[type=text] { padding:7px 12px; border-radius:var(--r-sm); transition:border-color .15s, box-shadow .15s; }
   .bar input[type=text]:focus { box-shadow:0 0 0 3px var(--teal-soft); }
@@ -178,7 +184,7 @@
 <div id="app"></div>
 <script>
 (() => {
-  const { useState, useEffect, useMemo, useReducer, useRef } = React;
+  const { useState, useEffect, useMemo, useReducer, useRef, useCallback } = React;
   const html = htm.bind(React.createElement);
   const W = window.wiztri;
 
@@ -344,6 +350,10 @@
     const [isAdmin, setIsAdmin] = useState(true);
     const [note, setNote] = useState(null);
     const [engine, setEngine] = useState('node'); // 'mft' | 'node'
+    const [allRows, setAllRows] = useState([]);
+    const [allTotal, setAllTotal] = useState(0);
+    const [allLoading, setAllLoading] = useState(false);
+    const allOffsetRef = useRef(0);
     const scanToken = useRef(0); // naik tiap scan baru -> buang hasil basi
     const [, bump] = useReducer((x) => x + 1, 0); // paksa re-render setelah muat anak malas
 
@@ -393,6 +403,92 @@
     }, [tree, metric]);
 
     const showAll = (n) => { n._showAll = true; bump(); };
+
+    // ---- "All Files": daftar global semua file (paginasi + filter) ----
+    const allBase = (tree && tree.path) || root;
+    const loadAll = useCallback(async (reset) => {
+      if (!W || !W.filesAll || !allBase) return;
+      const off = reset ? 0 : allOffsetRef.current;
+      setAllLoading(true);
+      try {
+        const r = await W.filesAll(allBase, off, 500, filter);
+        setAllTotal(r.total);
+        setAllRows(reset ? r.rows : (p) => [...p, ...r.rows]);
+        allOffsetRef.current = off + r.rows.length;
+      } catch {} finally { setAllLoading(false); }
+    }, [W, allBase, filter]);
+
+    useEffect(() => {
+      if (view === 'all') loadAll(true);
+    }, [view, allBase]);
+
+    useEffect(() => {
+      if (view !== 'all' || !W || !W.filesAll) return;
+      const id = setTimeout(() => loadAll(true), 250);
+      return () => clearTimeout(id);
+    }, [filter]);
+
+    // isi panel kiri dipilih di sini (bukan ternary raksasa di JSX)
+    const leftPanel = view === 'all' ? html`
+      <div className="all-wrap">
+        <div className="all-total">${allTotal.toLocaleString()} files</div>
+        <table className="all">
+          <thead><tr><th>Name</th><th>Path</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th></tr></thead>
+          <tbody>
+            ${allRows.map((f, i) => html`
+              <tr key="${i}">
+                <td>${f.name}</td>
+                <td className="dim-path">${f.path}</td>
+                <td className="num">${fmt(metric === 'alloc' ? f.alloc : f.size)}</td>
+              </tr>`)}
+            ${allLoading ? html`<tr><td colspan="3" className="dim">Loading…</td></tr>` : null}
+            ${!allLoading && allRows.length < allTotal ? html`
+              <tr className="more" tabIndex="0" role="button" onClick="${() => loadAll(false)}"
+                  onKeyDown="${(e) => { if (e.key==='Enter'||e.key===' ') loadAll(false); }}">
+                <td colspan="3">⋯ Load more (${allTotal - allRows.length} remaining)</td>
+              </tr>` : null}
+          </tbody>
+        </table>
+      </div>` : (view === 'types' ? html`
+      <table>
+        <thead><tr><th>Type</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
+        <tbody>
+          ${(() => {
+            const rows = fileTypes.filter((g) => !match || match(g.name)).slice(0, MAX_ROWS);
+            return rows.map((g, i) => html`
+              <tr key="${i}" tabIndex="0" role="row">
+                <td>
+                  <span className="spacer"/>
+                  <span className="mark" style="${{ background: extColor(g.name) }}"/>
+                  ${g.name}
+                  <span className="dim-count"> (${g.count})</span>
+                </td>
+                <td className="num">${fmt(metric === 'alloc' ? g.alloc : g.size)}</td>
+                <td className="pct">${((metric === 'alloc' ? g.alloc : g.size) / total * 100).toFixed(1) + '%'}</td>
+                <td><span className="sizebar" style="${{ width: Math.min(120, ((metric === 'alloc' ? g.alloc : g.size) / (total || 1)) * 100 * 1.2) }}"/></td>
+              </tr>`);
+          })()}
+        </tbody>
+      </table>` : html`
+      <table>
+        <thead><tr><th>Name</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
+        <tbody>
+          ${(() => {
+            const kids = (tree && tree.children) || [];
+            if (match) kids = kids.filter((c) => match(c.name));
+            const shown = kids.length > MAX_ROWS && !showRootMore ? kids.slice(0, MAX_ROWS) : kids;
+            return shown.map((c, i) => html`
+              <${Row} key="${i}" node="${c}" depth="${0}" total="${total}"
+                     expanded="${expanded}" selected="${selected}" metric="${metric}"
+                     onToggle="${toggle}" onSelect="${select}"
+                     onShowAll="${showAll}" basePath="${tree.path}"/>`);
+          })()}
+          ${tree && tree.children && tree.children.length > MAX_ROWS && !showRootMore ? html`
+            <tr className="more" tabIndex="0" role="button" onClick="${() => setShowRootMore(true)}" onKeyDown="${(e) => { if (e.key==='Enter'||e.key===' ') setShowRootMore(true); }}">
+              <td colspan="4">⋯ and ${tree.children.length - MAX_ROWS} more — Show all</td>
+            </tr>` : null}
+        </tbody>
+      </table>`);
 
     async function run(p) {
       const tok = ++scanToken.current;
@@ -510,6 +606,7 @@
             <div className="tabs" role="group" aria-label="View">
               <button className="${view === 'files' ? 'on' : ''}" onClick="${() => setView('files')}">Files</button>
               <button className="${view === 'types' ? 'on' : ''}" onClick="${() => setView('types')}">File Types</button>
+              ${W && W.filesAll ? html`<button className="${view === 'all' ? 'on' : ''}" onClick="${() => setView('all')}">All Files</button>` : null}
             </div>
             <input className="find" type="text" value="${filter}" placeholder="Filter…" aria-label="Filter results"
                    onChange="${e => setFilter(e.target.value)}"/>
@@ -539,46 +636,7 @@
           </div>` : html`
           <div className="cols" key="${scanKey}">
             <div className="panel left">
-              ${view === 'types' ? html`
-                <table>
-                  <thead><tr><th>Type</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
-                  <tbody>
-                    ${(() => {
-                      const rows = fileTypes.filter((g) => !match || match(g.name)).slice(0, MAX_ROWS);
-                      return rows.map((g, i) => html`
-                        <tr key="${i}" tabIndex="0" role="row">
-                          <td>
-                            <span className="spacer"/>
-                            <span className="mark" style="${{ background: extColor(g.name) }}"/>
-                            ${g.name}
-                            <span className="dim-count"> (${g.count})</span>
-                          </td>
-                          <td className="num">${fmt(metric === 'alloc' ? g.alloc : g.size)}</td>
-                          <td className="pct">${((metric === 'alloc' ? g.alloc : g.size) / total * 100).toFixed(1) + '%'}</td>
-                          <td><span className="sizebar" style="${{ width: Math.min(120, ((metric === 'alloc' ? g.alloc : g.size) / (total || 1)) * 100 * 1.2) }}"/></td>
-                        </tr>`);
-                    })()}
-                  </tbody>
-                </table>` : html`
-                <table>
-                  <thead><tr><th>Name</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
-                  <tbody>
-                    ${(() => {
-                      let kids = tree.children || [];
-                      if (match) kids = kids.filter((c) => match(c.name));
-                      const shown = kids.length > MAX_ROWS && !showRootMore ? kids.slice(0, MAX_ROWS) : kids;
-                      return shown.map((c, i) => html`
-                        <${Row} key="${i}" node="${c}" depth="${0}" total="${total}"
-                               expanded="${expanded}" selected="${selected}" metric="${metric}"
-                               onToggle="${toggle}" onSelect="${select}"
-                               onShowAll="${showAll}" basePath="${tree.path}"/>`);
-                    })()}
-                    ${tree.children && tree.children.length > MAX_ROWS && !showRootMore ? html`
-                      <tr className="more" tabIndex="0" role="button" onClick="${() => setShowRootMore(true)}" onKeyDown="${(e) => { if (e.key==='Enter'||e.key===' ') setShowRootMore(true); }}">
-                        <td colspan="4">⋯ and ${tree.children.length - MAX_ROWS} more — Show all</td>
-                      </tr>` : null}
-                  </tbody>
-                </table>`}
+              ${leftPanel}
             </div>
             <div className="panel right">
               ${tmItems.length ? html`

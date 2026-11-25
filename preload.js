@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('wiztri', {
   openPath: (target) => ipcRenderer.invoke('open-path', target),
   isAdmin: () => ipcRenderer.invoke('is-admin'),
   relaunchAdmin: () => ipcRenderer.invoke('relaunch-admin'),
+  filesAll: (root, offset, limit, q) => ipcRenderer.invoke('files-all', root, offset, limit, q),
   // Kembalikan fungsi unsub.
   onProgress: (cb) => {
     const handler = (_e, data) => cb(data);

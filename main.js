@@ -315,6 +315,76 @@ ipcMain.handle('relaunch-admin', () => {
   } catch { return { ok: false }; }
 });
 
+// ---------------------------------------------------------------------------
+// "All Files": daftar global SEMUA file (lintas folder) di bawah root, diurut
+// ukuran menurun. Backend flatten tree penuh yang sudah di-cache, lalu
+// paginasi (renderer hanya menerima chunk kecil). Cache per path (LRU).
+// ---------------------------------------------------------------------------
+const filesCache = new Map();
+const FILES_CACHE_MAX = 3;
+
+function flattenFiles(node, out, parent) {
+  const p = parent == null ? (node.path || '') : parent;
+  const kids = node.children || [];
+  for (let i = 0; i < kids.length; i++) {
+    const c = kids[i];
+    const cp = p ? p + '\\' + c.name : c.name;
+    if (Array.isArray(c.children)) flattenFiles(c, out, cp);
+    else out.push({ name: c.name, path: cp, size: c.size || 0, alloc: c.alloc ?? c.size ?? 0 });
+  }
+}
+
+// Ambil node tree penuh untuk path (root atau subtree dari leluhur yang sudah
+// dibangun). Basis untuk flatten.
+function fullNodeFor(base) {
+  const bb = base.toLowerCase();
+  for (const [p, tree] of treeCache) {
+    const pb = p.toLowerCase();
+    if (bb.startsWith(pb) && atBoundary(bb, pb.length)) {
+      const rel = base.slice(p.length).split(/[\\\/]+/).filter(Boolean);
+      const node = rel.length ? descend(tree, rel) : tree;
+      if (node) return node;
+    }
+  }
+  return null;
+}
+
+function filesEntry(base) {
+  let e = filesCache.get(base);
+  if (e) { filesCache.delete(base); filesCache.set(base, e); return e; } // sentuh -> LRU
+  const node = fullNodeFor(base);
+  const files = [];
+  if (node) flattenFiles(node, files, null);
+  files.sort((a, b) => b.size - a.size);
+  e = { total: files.length, files };
+  filesCache.set(base, e);
+  if (filesCache.size > FILES_CACHE_MAX) {
+    const oldest = filesCache.keys().next().value;
+    if (oldest !== undefined) filesCache.delete(oldest);
+  }
+  return e;
+}
+
+ipcMain.handle('files-all', (_evt, root, offset, limit, q) => {
+  const base = (typeof root === 'string' && /^[A-Za-z]:([\\\/]|$)/.test(root)) ? root : '';
+  if (!base) return { total: 0, rows: [] };
+  const e = filesEntry(base);
+  let all = e.files;
+  if (q) {
+    const qq = q.trim().toLowerCase();
+    if (qq) {
+      const toks = qq.split(/\s+/).filter(Boolean);
+      all = all.filter((f) => {
+        const s = f.name.toLowerCase() + '\n' + f.path.toLowerCase();
+        return toks.every((t) => s.includes(t));
+      });
+    }
+  }
+  const start = Math.max(0, offset | 0);
+  const lim = Math.min(1000, Math.max(1, (limit | 0) || 500));
+  return { total: all.length, rows: all.slice(start, start + lim) };
+});
+
 ipcMain.handle('open-path', (_e, target) => {
   try {
     if (!target || typeof target !== 'string') return { ok: false };

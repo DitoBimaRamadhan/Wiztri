@@ -79,6 +79,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         });
         return ok;
       })(),
+      all: typeof window.wiztri.filesAll === 'function'
+        ? await window.wiztri.filesAll(${esc}, 0, 200, '')
+        : null,
+      allFiltered: typeof window.wiztri.filesAll === 'function'
+        ? await window.wiztri.filesAll(${esc}, 0, 50, 'vendor')
+        : null,
       progCount: prog.length,
       progFirst: prog[0] || null
     });
@@ -105,8 +111,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('subfolder path benar', out && path.resolve(out.subPath) === path.join(SCANPATH, 'vendor'));
   check('subfolder hasil slice valid', out && out.subShapeOk === true);
   check('subfolder punya anak', out && out.subKids >= 0);
+  // All Files: daftar global harus berisi file, total > 0, dan urut size menurun.
+  const allOk = out && out.all && Array.isArray(out.all.rows) && out.all.total > 0 && out.all.rows.length > 0;
+  const sorted = allOk && out.all.rows.every((r, i) => i === 0 || out.all.rows[i - 1].size >= r.size);
+  check('filesAll mengembalikan daftar (total>0)', !!allOk);
+  check('filesAll urut size menurun', !!sorted);
+  check('filesAll filter "vendor" mempersempit', out && out.allFiltered && out.allFiltered.total > 0 && out.allFiltered.total <= out.all.total);
   console.log('  hasil scan → size=' + (out && out.size) + ' kids=' + (out && out.kids) + ' err=' + (out && out.err));
   console.log('  subfolder → name=' + (out && out.subName) + ' kids=' + (out && out.subKids));
+  console.log('  allfiles → total=' + (out && out.all && out.all.total) + ' rows=' + (out && out.all && out.all.rows.length) + ' filtered=' + (out && out.allFiltered && out.allFiltered.total));
   console.log('  progres → event=' + (out && out.progCount) + ' first={count=' + (out && out.progFirst && out.progFirst.count) + ', total=' + (out && out.progFirst && out.progFirst.total) + '}');
 
   ws.close();
