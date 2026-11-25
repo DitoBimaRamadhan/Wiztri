@@ -4,7 +4,11 @@
 // Output: pohon JSON ke stdout, shape sama dengan scan Node (name/size/alloc/children).
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, Read, Seek, SeekFrom, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+// Ter-set bila ada folder > kedalaman 128 terpotong; muncul sebagai catatan di JSON.
+static TRUNCATED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone)]
 struct Node {
@@ -144,7 +148,7 @@ fn parse_mft_bytes(buf: &[u8]) -> Option<u64> {
 
 fn emit_children(p: u64, by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
                 mem: &HashMap<u64, (u64, u64)>, out: &mut String, depth: usize) {
-    if depth > 128 { return; }
+    if depth > 128 { TRUNCATED.store(true, Ordering::Relaxed); return; }
     if let Some(ids) = by_parent.get(&p) {
         let mut ids: Vec<usize> = ids.iter().copied().filter(|&i| nodes[i].frn != p).collect();
         ids.sort_by(|&a, &b| {
@@ -220,74 +224,87 @@ fn emit_root_node(frn: u64, name: &str, path_label: &str,
     out.push_str(&a.to_string());
     out.push_str(",\"children\":[");
     emit_children(frn, by_parent, nodes, mem, out, 0);
-    out.push_str("]}");
+    out.push_str("]");
+    if TRUNCATED.load(Ordering::Relaxed) { out.push_str(",\"note\":\"depth_truncated\""); }
+    out.push_str("}");
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let raw = args.get(1).cloned().unwrap_or_else(|| "C".to_string());
-    let filter = args.get(2).cloned();
-    // mode device bila 1 huruf; selain itu anggap path file (mode uji).
-    let device_mode = raw.len() == 1 && raw.chars().next().unwrap().is_ascii_alphabetic();
-    let target = if device_mode { format!("\\\\.\\{}:", raw.to_uppercase()) } else { raw.clone() };
-
-    let mut f = match File::open(&target) {
-        Ok(f) => f,
-        Err(e) => {
-            let mut s = String::from("{\"error\":\"no_volume_access\",\"detail\":\"");
-            esc(&e.to_string(), &mut s);
-            s.push_str("\"}");
-            println!("{}", s);
-            std::process::exit(2);
+// Hitung ukuran agregat (dengan proteksi siklus). Memoisasi global per volume.
+fn calc(p: u64, by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
+        mem: &mut HashMap<u64, (u64, u64)>, seen: &mut HashMap<u64, bool>, depth: usize) -> (u64, u64) {
+    if depth > 128 { TRUNCATED.store(true, Ordering::Relaxed); return (0, 0); }
+    if seen.get(&p).copied().unwrap_or(false) { return (0, 0); }
+    if let Some(&v) = mem.get(&p) { return v; }
+    seen.insert(p, true);
+    let mut s = 0u64;
+    let mut a = 0u64;
+    if let Some(list) = by_parent.get(&p) {
+        for &idx in list {
+            let n = &nodes[idx];
+            if n.is_dir {
+                let (cs, ca) = calc(n.frn, by_parent, nodes, mem, seen, depth + 1);
+                s += cs; a += ca;
+            } else {
+                s += n.size; a += n.alloc;
+            }
         }
-    };
+    }
+    seen.insert(p, false);
+    mem.insert(p, (s, a));
+    (s, a)
+}
 
+struct Vol {
+    nodes: Vec<Node>,
+    by_parent: HashMap<u64, Vec<usize>>,
+}
+
+// Baca $MFT penuh sekali -> nodes + by_parent. `progress` menyalakan laporan
+// `P <count> <total>` ke stderr (dipakai mode layanan untuk UI nyata).
+fn load_vol(target: &str, progress: bool) -> Result<Vol, String> {
+    let mut f = File::open(target).map_err(|e| {
+        let mut s = String::from("{\"error\":\"no_volume_access\",\"detail\":\"");
+        esc(&e.to_string(), &mut s);
+        s.push_str("\"}");
+        s
+    })?;
     let mut boot = [0u8; 512];
     if f.seek(SeekFrom::Start(0)).is_err() || f.read_exact(&mut boot).is_err() {
-        println!("{}", r#"{"error":"read_boot"}"#);
-        std::process::exit(3);
+        return Err(r#"{"error":"read_boot"}"#.into());
     }
-    if &boot[3..7] != b"NTFS" {
-        println!("{}", r#"{"error":"not_ntfs"}"#);
-        std::process::exit(4);
-    }
+    if &boot[3..7] != b"NTFS" { return Err(r#"{"error":"not_ntfs"}"#.into()); }
     let bps = rd_u16(&boot, 0x0b) as usize;
     let spc = boot[0x0d] as usize;
-    if bps < 256 || spc == 0 {
-        println!("{}", r#"{"error":"bad_geometry"}"#);
-        std::process::exit(5);
-    }
+    if bps < 256 || spc == 0 { return Err(r#"{"error":"bad_geometry"}"#.into()); }
     let cluster = bps * spc;
     let mft_start = rd_u64(&boot, 0x30) * cluster as u64;
     let cpm = boot[0x40] as i8;
     let rec_size = if cpm > 0 {
         let rs = cpm as usize * cluster;
-        if rs > (1 << 20) { println!("{}", r#"{"error":"bad_record_size"}"#); std::process::exit(6); }
+        if rs > (1 << 20) { return Err(r#"{"error":"bad_record_size"}"#.into()); }
         rs
     } else {
         let sh = (-(cpm as i32)) as usize;
         // guard: catatan > 2MB tak masuk akal utk $MFT; cegah OOM dr geometri rusak
-        if sh >= 21 { println!("{}", r#"{"error":"bad_record_size"}"#); std::process::exit(6); }
+        if sh >= 21 { return Err(r#"{"error":"bad_record_size"}"#.into()); }
         1usize << sh
     };
 
     // Baca rekaman 0 utk ukuran $MFT
     let mut record0 = vec![0u8; rec_size];
     if f.seek(SeekFrom::Start(mft_start)).is_err() || f.read_exact(&mut record0).is_err() {
-        println!("{}", r#"{"error":"read_mft0"}"#);
-        std::process::exit(7);
+        return Err(r#"{"error":"read_mft0"}"#.into());
     }
     fixup(&mut record0, bps);
     let mft_bytes = match parse_mft_bytes(&record0) {
         Some(b) => b,
-        None => { println!("{}", r#"{"error":"mft_no_data"}"#); std::process::exit(8); }
+        None => return Err(r#"{"error":"mft_no_data"}"#.into()),
     };
     let total_recs = (mft_bytes / rec_size as u64).min(300_000_000);
 
     // mundurkan cursor ke awal $MFT (readsaman 0 sudah dibaca untuk metadata)
     if f.seek(SeekFrom::Start(mft_start)).is_err() {
-        println!("{}", r#"{"error":"read_mft0"}"#);
-        std::process::exit(7);
+        return Err(r#"{"error":"read_mft0"}"#.into());
     }
 
     // Kapasitas konservatif: jangan reservasi dari batas 300M (bisa alokasi ~2GB
@@ -331,56 +348,116 @@ fn main() {
             }
             frn += recs as u64;
             remaining -= recs as u64;
+            if progress && frn % 4096 == 0 { eprintln!("P {} {}", frn, total_recs); }
         }
         if eof || got < want { break; }
     }
+    Ok(Vol { nodes, by_parent })
+}
 
-    // ---- hitung ukuran agregat (dengan proteksi siklus) ----
-    fn calc(p: u64, by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
-            mem: &mut HashMap<u64, (u64, u64)>, seen: &mut HashMap<u64, bool>, depth: usize) -> (u64, u64) {
-        if depth > 128 { return (0, 0); }
-        if seen.get(&p).copied().unwrap_or(false) { return (0, 0); }
-        if let Some(&v) = mem.get(&p) { return v; }
-        seen.insert(p, true);
-        let mut s = 0u64;
-        let mut a = 0u64;
-        if let Some(list) = by_parent.get(&p) {
-            for &idx in list {
-                let n = &nodes[idx];
-                if n.is_dir {
-                    let (cs, ca) = calc(n.frn, by_parent, nodes, mem, seen, depth + 1);
-                    s += cs; a += ca;
-                } else {
-                    s += n.size; a += n.alloc;
+// Mode layanan persisten: baca $MFT sekali untuk sebuah target (drive atau
+// file volume uji), lalu layani banyak query subtree lewat stdin. Tiap baris =
+// root path; "-" = akar volume; kosong/"quit" = tutup.
+// Protokol: respon = baris panjang (desimal), lalu JSON sepanjang itu (tanpa
+// newline). Path yang tak ketemu -> JSON {"error":"path_not_found"}.
+fn run_serve(arg: &str) -> i32 {
+    let device_mode = arg.len() == 1 && arg.chars().next().unwrap().is_ascii_alphabetic();
+    let drive = arg.chars().next().unwrap();
+    let target = if device_mode { format!("\\\\.\\{}:", drive.to_ascii_uppercase()) } else { arg.to_string() };
+    let vol = match load_vol(&target, true) {
+        Ok(v) => v,
+        Err(e) => { println!("{}", e); return 2; }
+    };
+    let mut mem: HashMap<u64, (u64, u64)> = HashMap::new();
+    let mut seen: HashMap<u64, bool> = HashMap::new();
+    calc(5, &vol.by_parent, &vol.nodes, &mut mem, &mut seen, 0);
+
+    let stdout = std::io::stdout();
+    let mut w = std::io::BufWriter::new(stdout.lock());
+    let mut input = std::io::stdin().lock();
+    let mut linebuf = String::new();
+    let mut out = String::with_capacity(1 << 20);
+    loop {
+        linebuf.clear();
+        match input.read_line(&mut linebuf) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        let line = linebuf.trim().to_string();
+        if line.is_empty() || line.eq_ignore_ascii_case("quit") || line.eq_ignore_ascii_case("exit") { break; }
+        TRUNCATED.store(false, Ordering::Relaxed);
+        let root_frn = if line == "-" { 5 } else {
+            match find_node_by_path(5, &line, &vol.by_parent, &vol.nodes) {
+                Some(f) => f,
+                None => {
+                    out.clear();
+                    out.push_str(r#"{"error":"path_not_found"}"#);
+                    let _ = writeln!(w, "{}", out.len());
+                    let _ = w.write_all(out.as_bytes());
+                    let _ = w.flush();
+                    continue;
                 }
             }
+        };
+        out.clear();
+        if root_frn == 5 {
+            let name_label = if device_mode { format!("{}:", drive.to_ascii_uppercase()) } else { arg.to_string() };
+            let path_label = name_label.clone();
+            emit_root_node(5, &name_label, &path_label, &vol.by_parent, &vol.nodes, &mem, &mut out);
+        } else if let Some(idx) = vol.nodes.iter().position(|n| n.frn == root_frn) {
+            let n = &vol.nodes[idx];
+            let nm = n.name.clone();
+            let pl = line.replace('/', "\\");
+            emit_root_node(root_frn, &nm, &pl, &vol.by_parent, &vol.nodes, &mem, &mut out);
+        } else {
+            out.push_str(r#"{"error":"path_not_found"}"#);
         }
-        seen.insert(p, false);
-        mem.insert(p, (s, a));
-        (s, a)
+        let _ = writeln!(w, "{}", out.len());
+        let _ = w.write_all(out.as_bytes());
+        let _ = w.flush();
     }
+    0
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s == "--serve").unwrap_or(false) {
+        let sr = args.get(2).cloned().unwrap_or_else(|| "C".to_string());
+        std::process::exit(run_serve(&sr));
+    }
+    let raw = args.get(1).cloned().unwrap_or_else(|| "C".to_string());
+    let filter = args.get(2).cloned();
+    // mode device bila 1 huruf; selain itu anggap path file (mode uji).
+    let device_mode = raw.len() == 1 && raw.chars().next().unwrap().is_ascii_alphabetic();
+    let target = if device_mode { format!("\\\\.\\{}:", raw.to_uppercase()) } else { raw.clone() };
+
+    let vol = match load_vol(&target, false) {
+        Ok(v) => v,
+        Err(e) => { println!("{}", e); std::process::exit(2); }
+    };
 
     let mut mem: HashMap<u64, (u64, u64)> = HashMap::new();
     let mut seen: HashMap<u64, bool> = HashMap::new();
     // Akar output: 5 (akar volume) bila tanpa filter; bila ada filter, node yang cocok.
     let root_frn = match &filter {
-        Some(f) => match find_node_by_path(5, f, &by_parent, &nodes) {
+        Some(f) => match find_node_by_path(5, f, &vol.by_parent, &vol.nodes) {
             Some(frn) => frn,
             None => { println!("{}", r#"{"error":"path_not_found"}"#); std::process::exit(9); }
         },
         None => 5,
     };
-    calc(root_frn, &by_parent, &nodes, &mut mem, &mut seen, 0);
+    calc(root_frn, &vol.by_parent, &vol.nodes, &mut mem, &mut seen, 0);
 
-    let mut out = String::with_capacity((nodes.len() * 64).max(1 << 20));
+    let mut out = String::with_capacity((vol.nodes.len() * 64).max(1 << 20));
     if root_frn == 5 {
         let name_label = if device_mode { raw.to_uppercase() } else { raw.clone() };
         let path_label = if device_mode { format!("{}:", raw.to_uppercase()) } else { raw.clone() };
-        emit_root_node(5, &name_label, &path_label, &by_parent, &nodes, &mem, &mut out);
-    } else if let Some(idx) = nodes.iter().position(|n| n.frn == root_frn) {
-        let n = &nodes[idx];
+        emit_root_node(5, &name_label, &path_label, &vol.by_parent, &vol.nodes, &mem, &mut out);
+    } else if let Some(idx) = vol.nodes.iter().position(|n| n.frn == root_frn) {
+        let n = &vol.nodes[idx];
         let pl = filter.as_deref().unwrap_or("").replace('/', "\\");
-        emit_root_node(root_frn, &n.name, &pl, &by_parent, &nodes, &mem, &mut out);
+        emit_root_node(root_frn, &n.name, &pl, &vol.by_parent, &vol.nodes, &mem, &mut out);
     } else {
         println!("{}", r#"{"error":"path_not_found"}"#);
         std::process::exit(9);

@@ -3,7 +3,6 @@
 'use strict';
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const { spawn } = require('child_process');
-const os = require('os');
 const fs = require('fs');
 const path = require('path');
 
@@ -13,69 +12,91 @@ const HIDDEN = new Set([
   '$Extend', 'Config.Msi', 'DumpStack.log.tmp', 'Desktop.ini',
 ]);
 
-// Jalur MFT (Rust). return null bila tak tersedia / tak diizinkan.
-// Streaming ke file temp (hindari maxBuffer) + ref child utk di-kill saat app tutup.
-let childRef = null;
-function tryMft(args) {
-  const exe = path.join(process.resourcesPath, 'wiztri-scan.exe');
+// Juru layan MFT persisten (Rust). Satu proses baca $MFT SEKALI per drive,
+// lalu melayani banyak query subtree lewat stdin/stdout. Menghapus rescan
+// volume penuh utk tiap ekspansi folder (P1), memberi progres nyata (P2),
+// dan meniadakan race temp-file (F3).
+let server = null;
+// Lokasi exe scanner: utamakan bundel (resourcesPath), lalu target build lokal
+// (dev). return null bila tak ada -> fallback Node walk.
+function scannerExe() {
+  const cands = [
+    path.join(process.resourcesPath, 'wiztri-scan.exe'),
+    path.join(__dirname, 'rust-scanner', 'target', 'release', 'wiztri-scan.exe'),
+    path.join(__dirname, 'rust-scanner', 'target', 'x86_64-pc-windows-gnu', 'release', 'wiztri-scan.exe'),
+    path.join(__dirname, 'rust-scanner', 'target', 'debug', 'wiztri-scan.exe'),
+  ];
+  for (const c of cands) {
+    try { if (fs.existsSync(c)) return c; } catch {}
+  }
+  return null;
+}
+function ensureServer(drive) {
+  if (server && server.drive === drive && !server.child.killed) return Promise.resolve(server);
+  if (server) { try { server.child.kill(); } catch {} server = null; }
+  const exe = scannerExe();
+  if (!exe) return Promise.resolve(null);
   return new Promise((resolve) => {
-    // Temp file mode 0600 (pemilik saja): nama file drive = data sensitif.
-    const tmp = path.join(os.tmpdir(), 'wiztri_mft_' + process.pid + '_' + Date.now() + '.json');
-    const ws = fs.createWriteStream(tmp, { mode: 0o600 });
-    ws.on('error', () => { try { child.kill(); } catch {} finish(null); }); // gagal tulis temp -> jangan gantung/biarkan orphan
-    const child = spawn(exe, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
-    childRef = child;
-    let done = false;
-    const finish = (val) => {
-      if (done) return; done = true;
-      if (childRef === child) childRef = null;
-      try { ws.destroy(); } catch {}
-      try { fs.unlinkSync(tmp); } catch {}
-      resolve(val);
-    };
-    child.stdout.pipe(ws);
-    child.on('error', () => finish(null));
-    child.on('close', (code) => {
-      if (code !== 0) { try { ws.destroy(); } catch {} return finish(null); }
-      // Jangan bergantung pada 'finish' saja (bisa tak terpicu -> gantung).
-      // Tunggu 'close' stream (terpicu setelah flush/selesai), plus fallback.
-      const read = () => {
-        try {
-          const j = JSON.parse(fs.readFileSync(tmp, 'utf8'));
-          finish(!j || j.error ? null : j);
-        } catch { finish(null); }
-      };
-      ws.end();
-      ws.once('close', read);
-      ws.once('error', () => finish(null));
-      setTimeout(read, 2000).unref(); // jaring pengaman bila 'close' tak datang
+    const child = spawn(exe, ['--serve', drive], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    let buf = Buffer.alloc(0);
+    const readers = [];
+    const svc = { drive, child, readers, onProgress: null, dead: false };
+    child.stdout.on('data', (d) => {
+      buf = Buffer.concat([buf, d]);
+      let nl;
+      while ((nl = buf.indexOf(0x0a)) >= 0) {
+        const len = Number(buf.slice(0, nl).toString('utf8'));
+        if (!Number.isFinite(len) || len < 0) { buf = buf.slice(nl + 1); continue; }
+        if (buf.length < nl + 1 + len) break;
+        const body = buf.slice(nl + 1, nl + 1 + len).toString('utf8');
+        buf = buf.slice(nl + 1 + len);
+        const q = readers.shift();
+        if (q) q(body);
+      }
     });
-    const t = setTimeout(() => { try { child.kill(); } catch {} }, 180000);
-    t.unref();
+    child.stderr.on('data', (d) => {
+      if (!svc.onProgress) return;
+      for (const m of d.toString('utf8').matchAll(/P (\d+) (\d+)/g)) {
+        svc.onProgress(parseInt(m[1], 10), parseInt(m[2], 10));
+      }
+    });
+    const failAll = () => {
+      svc.dead = true;
+      while (readers.length) { const q = readers.shift(); if (q) q(null); }
+    };
+    child.on('error', failAll);
+    child.on('close', failAll);
+    server = svc;
+    resolve(svc);
   });
 }
 
-// Hitung total node (dir+file) di bawah root, termasuk root.
-// Aturan sama dgn nodeScan: tak mengikuti symlink, depth cap 128,
-// error akses diabaikan. Digunakan utk persentase progres.
-async function countNodes(root, depth = 0) {
-  if (depth > 128) return 1;
-  let entries;
+function serverQuery(svc, line) {
+  if (svc.dead || svc.child.killed || svc.child.exitCode != null) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    svc.readers.push(resolve);
+    svc.child.stdin.write(line + '\n');
+  });
+}
+
+// Coba layani scan via server MFT persisten. return null bila tak tersedia /
+// gagal / path bukan drive lokal -> pemanggil fallback ke Node walk.
+async function tryMftServe(root, onProgress) {
+  const m = /^([A-Za-z]):([\\\/].*)?$/.exec(root || '');
+  if (!m) return null;
+  const drive = m[1].toUpperCase();
+  const svc = await ensureServer(drive);
+  if (!svc || svc.dead) return null;
+  svc.onProgress = onProgress;
   try {
-    entries = await fs.promises.readdir(root, { withFileTypes: true });
-  } catch {
-    return 1;
-  }
-  let c = 1;
-  for (const d of entries) {
-    if (d.isSymbolicLink()) { c++; continue; }
-    if (d.isDirectory()) {
-      try { c += await countNodes(path.join(root, d.name), depth + 1); } catch { c++; }
-    } else {
-      c++;
-    }
-  }
-  return c;
+    const rest = m[2];
+    const req = rest && !/^[\\\/]+$/.test(rest) ? root.replace(/[\\\/]+$/, '') : '-'; // '-' = akar volume
+    const raw = await serverQuery(svc, req);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    return (!j || j.error) ? null : j;
+  } catch { return null; }
+  finally { svc.onProgress = null; }
 }
 
 async function nodeScan(root, onProgress, state, depth = 0) {
@@ -118,21 +139,6 @@ async function nodeScan(root, onProgress, state, depth = 0) {
   return { name: path.basename(root) || root, path: root, size, children };
 }
 
-// MFT dipakai utk SEMUA jalur drive lokal (root drive maupun subfolder) —
-// scanner Rust kini menerima arg ke-2 utk memotong tree volume ke subtree
-// yang diminta. Ini mem-bypass ACL folder (System Volume Information,
-// $Recycle.Bin, AppData pengguna lain, dll.) sehingga tak ada access_denied.
-// Bila exe tak tersedia / tanpa admin (gagal), return null -> fallback Node walk.
-function tryMftPath(root) {
-  const m = /^([A-Za-z]):([\\\/].*)?$/.exec(root || '');
-  if (!m) return Promise.resolve(null); // bukan jalur drive lokal -> fallback Node
-  const drive = m[1].toUpperCase();
-  const rest = m[2];
-  const args = [drive];
-  if (rest && !/^[\\\/]+$/.test(rest)) args.push(root.replace(/[\\\/]+$/, ''));
-  return tryMft(args);
-}
-
 // ---------------------------------------------------------------------------
 // Lazy scan: main selalu menahan tree PENUH di memori (cache per path), tetapi
 // hanya mengirimkan "slice" kecil (ringkasan + anak LANGSUNG) ke renderer.
@@ -162,6 +168,7 @@ function makeSlice(node) {
     size: node.size || 0,
     alloc: node.alloc ?? node.size ?? 0,
     dir: true,
+    note: node.note,
     children: kids,
   };
 }
@@ -207,6 +214,11 @@ function sliceFromCache(base) {
   return null;
 }
 
+// Serialisasi query scan (single-flight): satu query sekaligus supaya pipe
+// server tidak korup dan hasil tidak tumpang-tindih.
+let scanQueue = Promise.resolve();
+function enqueue(fn) { const r = scanQueue.then(fn); scanQueue = r.catch(() => {}); return r; }
+
 ipcMain.handle('scan', async (_evt, root) => {
   const base = root || process.env.SYSTEMDRIVE || 'C:\\';
   // Validasi: hanya jalur drive lokal (cegah UNC/SSRF & path di luar drive).
@@ -214,29 +226,32 @@ ipcMain.handle('scan', async (_evt, root) => {
   const fromCache = sliceFromCache(base);
   if (fromCache) return fromCache;
 
-  let full = null;
-  const mft = await tryMftPath(base);
-  if (mft && !mft.error) {
-    full = mft;
-    // MFT tak melaporkan progres -> beri status agar UI tidak tampak diam.
-    _evt.sender.send('scan-progress', { count: 1, total: 1, dir: 'Reading $MFT…' });
-  } else {
-    // Fallback Node: prescan utk % progres, lalu walk penuh.
-    const total = await countNodes(base);
-    const state = { count: 1 }; // akar dihitung sekali; anak dihitung di nodeScan
+  const runScan = async () => {
+    let mft = null;
+    try {
+      mft = await tryMftServe(base, (count, total) => {
+        _evt.sender.send('scan-progress', { count, total, dir: 'Reading $MFT…' });
+      });
+    } catch { mft = null; }
+    if (mft) return mft;
+
+    // Fallback Node single-pass (indeterminate progress). Tanpa prescan
+    // terpisah (P3) — jumlah item dilaporkan seiring jalan.
+    const state = { count: 1 };
     let lastSend = 0;
     const c = (count, dir) => {
       const now = Date.now();
       if (now - lastSend < 120) return; // throttle: maks ~8 event/detik
       lastSend = now;
-      _evt.sender.send('scan-progress', { count, total, dir });
+      _evt.sender.send('scan-progress', { count, total: 0, dir });
     };
     c(0, base);
-    full = await nodeScan(base, c, state);
-    // event akhir dikirim langsung tanpa throttle agar UI selalu sampai 100%
-    _evt.sender.send('scan-progress', { count: state.count, total, dir: '' });
-  }
+    const fullTree = await nodeScan(base, c, state);
+    _evt.sender.send('scan-progress', { count: state.count, total: 0, dir: '' });
+    return fullTree;
+  };
 
+  const full = await enqueue(runScan);
   cacheSet(base, full);
   return makeSlice(full);
 });
@@ -276,6 +291,14 @@ function localDrives() {
 
 ipcMain.handle('list-drives', () => localDrives());
 
+// Deteksi mode Administrator: probe folder terproteksi. ENOENT (folder tidak
+// ada) -> anggap admin; EACCES/EPERM -> bukan admin (MFT akan gagal).
+function isAdmin() {
+  try { fs.readdirSync('C:\\System Volume Information'); return true; }
+  catch (e) { return e.code !== 'ENOENT'; }
+}
+ipcMain.handle('is-admin', () => isAdmin());
+
 ipcMain.handle('open-path', (_e, target) => {
   try {
     if (!target || typeof target !== 'string') return { ok: false };
@@ -289,7 +312,7 @@ ipcMain.handle('open-path', (_e, target) => {
   } catch { return { ok: false }; }
 });
 
-// Pastikan scanner anak ikut mati saat app tutup (cegah orphan pegang volume handle).
+// Pastikan server scanner ikut mati saat app tutup (cegah orphan pegang volume handle).
 app.on('before-quit', () => {
-  if (childRef && !childRef.killed) { try { childRef.kill(); } catch {} }
+  if (server && !server.child.killed) { try { server.child.kill(); } catch {} }
 });

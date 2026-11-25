@@ -54,6 +54,10 @@
   .btn:hover { filter:brightness(1.08); }
   .btn:disabled { opacity:.45; cursor:wait; }
   .metric { display:flex; gap:2px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:3px; }
+  .tabs { display:flex; gap:2px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:3px; }
+  .tabs button { background:transparent; color:var(--dim); border:0; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:var(--fs-label); font-weight:500; }
+  .tabs button.on { background:var(--amber); color:#241503; }
+  .find { flex:0 1 200px; min-width:120px; }
   .metric button {
     background:transparent; color:var(--dim); border:0; padding:5px 12px;
     border-radius:6px; cursor:pointer; font-size:var(--fs-label); font-weight:500; transition:background .12s,color .12s;
@@ -118,6 +122,7 @@
   }
   body { -webkit-font-smoothing:antialiased; }
   .stripe { background:color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+  .admin-banner { padding:7px 14px; font-size:var(--fs-label); color:#241503; background:var(--amber); border-bottom:1px solid var(--line); }
   .bar { padding:9px 14px; }
   .bar input[type=text] { padding:7px 12px; border-radius:var(--r-sm); transition:border-color .15s, box-shadow .15s; }
   .bar input[type=text]:focus { box-shadow:0 0 0 3px var(--teal-soft); }
@@ -171,7 +176,7 @@
 <div id="app"></div>
 <script>
 (() => {
-  const { useState, useEffect, useMemo, useReducer } = React;
+  const { useState, useEffect, useMemo, useReducer, useRef } = React;
   const html = htm.bind(React.createElement);
   const W = window.wiztri;
 
@@ -241,6 +246,40 @@
   const tileDark = (c) => c === '#FFB454' || c === '#3FD6CB';
   const MAX_ROWS = 500; // cap render baris per level (cegah freeze/OOM pada folder raksasa)
 
+  // Warna treemap ala WizTree: file diwarnai berdasarkan ekstensi (hash),
+  // folder memakai palet. `ext` hanya huruf kecil.
+  const EXT_COLORS = ['#4FC3F7', '#81C784', '#FFB74D', '#E57373', '#BA68C8',
+                      '#4DB6AC', '#FFD54F', '#A1887F', '#90A4AE', '#F06292'];
+  const extOf = (name) => {
+    const i = (name || '').lastIndexOf('.');
+    if (i <= 0 || i === name.length - 1) return '';
+    return name.slice(i + 1).toLowerCase();
+  };
+  const extColor = (name) => {
+    const e = extOf(name);
+    if (!e) return '#3A5068';
+    let h = 0;
+    for (let k = 0; k < e.length; k++) h = (h * 31 + e.charCodeAt(k)) >>> 0;
+    return EXT_COLORS[h % EXT_COLORS.length];
+  };
+  const isDirNode = (n) => n.dir === true || Array.isArray(n.children);
+  const isLight = (hex) => {
+    const n = parseInt(hex.slice(1), 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    return 0.299 * r + 0.587 * g + 0.114 * b > 160;
+  };
+
+  // Pencocok filter: semua token harus muncul (case-insensitive).
+  const makeMatch = (q) => {
+    const qq = (q || '').trim().toLowerCase();
+    if (!qq) return null;
+    const toks = qq.split(/\s+/).filter(Boolean);
+    return (s) => {
+      const t = String(s || '').toLowerCase();
+      return toks.every((x) => t.includes(x));
+    };
+  };
+
   function Row({ node, depth, total, expanded, selected, metric, onToggle, onSelect, onShowAll, basePath }) {
     const isDir = node.dir === true;
     const val = metric === 'alloc' ? (node.alloc ?? node.size) : node.size;
@@ -298,6 +337,11 @@
     const [err, setErr] = useState(null);
     const [showRootMore, setShowRootMore] = useState(false);
     const [scanKey, setScanKey] = useState(0); // naik tiap scan selesai -> animasi masuk ulang
+    const [view, setView] = useState('files'); // 'files' | 'types'
+    const [filter, setFilter] = useState('');
+    const [isAdmin, setIsAdmin] = useState(true);
+    const [note, setNote] = useState(null);
+    const scanToken = useRef(0); // naik tiap scan baru -> buang hasil basi
     const [, bump] = useReducer((x) => x + 1, 0); // paksa re-render setelah muat anak malas
 
     useEffect(() => {
@@ -307,6 +351,10 @@
 
     useEffect(() => {
       if (W && W.listDrives) W.listDrives().then(setDrives).catch(() => {});
+    }, []);
+
+    useEffect(() => {
+      if (W && W.isAdmin) W.isAdmin().then(setIsAdmin).catch(() => {});
     }, []);
 
     const logicalTotal = tree ? (tree.size || 0) : 0;
@@ -320,36 +368,64 @@
       return c;
     }, [tree]);
 
+    const match = useMemo(() => makeMatch(filter), [filter]);
+
+    // Agregasi per ekstensi dari subtree yang sudah dimuat. Folder tidak dihitung;
+    // hanya daun file yang masuk bucket, jadi total = jumlah ukuran file sebenarnya.
+    const fileTypes = useMemo(() => {
+      if (!tree) return [];
+      const map = new Map();
+      (function walk(n) {
+        if (n.dir === true) { (n.children || []).forEach(walk); return; }
+        const e = extOf(n.name) || '(no extension)';
+        let g = map.get(e);
+        if (!g) map.set(e, g = { name: e, size: 0, alloc: 0, count: 0 });
+        g.size += n.size || 0;
+        g.alloc += (n.alloc ?? n.size) || 0;
+        g.count++;
+      })(tree);
+      const arr = [...map.values()];
+      arr.sort((a, b) => (metric === 'alloc' ? b.alloc - a.alloc : b.size - a.size));
+      return arr;
+    }, [tree, metric]);
+
     const showAll = (n) => { n._showAll = true; bump(); };
 
     async function run(p) {
-      setBusy(true); setProg(null); setSelected(null); setExpanded(new Set()); setErr(null);
+      const tok = ++scanToken.current;
+      setBusy(true); setProg(null); setSelected(null); setExpanded(new Set()); setErr(null); setNote(null);
       setShowRootMore(false);
       try {
         const t = W
           ? await W.scan(p)
           : await fetch('/api/scan?root=' + encodeURIComponent(p)).then(r => { if (!r.ok) throw new Error('scan failed'); return r.json(); });
+        if (tok !== scanToken.current) return; // hasil basi (scan baru sudah jalan)
         const n = normalizeAlloc(t);
         setTree(n);
         setScanKey((k) => k + 1);
         if (n && n.error) setErr(String(n.error));
+        if (n && n.note) setNote(String(n.note));
       } catch (e) {
+        if (tok !== scanToken.current) return;
         setErr(String(e));
         setTree({ name: p, error: String(e), size: 0, children: [] });
-      } finally { setBusy(false); setProg(null); }
+      } finally { if (tok === scanToken.current) { setBusy(false); setProg(null); } }
     }
 
     // Muat anak folder secara malas (lazy) lewat scan(path) — hanya saat dibuka.
     async function ensureChildren(n) {
       if (!n || n.dir !== true || n._loaded) return;
+      const tok = scanToken.current;
       n._loading = true;
       try {
         const s = W
           ? await W.scan(n.path)
           : await fetch('/api/scan?root=' + encodeURIComponent(n.path)).then(r => r.ok ? r.json() : Promise.reject(new Error('scan failed')));
+        if (tok !== scanToken.current) return; // scan baru dimulai -> buang
         n.children = s.children || [];
         n.error = s.error || undefined;
       } catch (e) {
+        if (tok !== scanToken.current) return;
         n.children = [];
         n.error = String(e);
       }
@@ -373,9 +449,7 @@
       return (tree && selected && Array.isArray(selected.children)) ? selected : tree;
     }, [tree, selected]);
 
-    const tmItems = useMemo(() => {
-      const kids = tmNode ? (tmNode.children || []) : [];
-      let list = kids.map(n => ({ node: n, v: metric === 'alloc' ? (n.alloc ?? n.size) : n.size })).filter(o => o.v > 0);
+    const cap200 = (list) => {
       list.sort((a, b) => b.v - a.v);
       if (list.length > 200) {
         const top = list.slice(0, 200);
@@ -384,7 +458,22 @@
         list = top;
       }
       return list;
-    }, [tmNode, metric]);
+    };
+
+    const tmItems = useMemo(() => {
+      if (view === 'types') {
+        const rows = fileTypes.filter((g) => !match || match(g.name));
+        return cap200(rows.map((g) => ({
+          node: { name: g.name, size: g.size, alloc: g.alloc, dir: false },
+          v: metric === 'alloc' ? g.alloc : g.size,
+        })).filter((o) => o.v > 0));
+      }
+      const kids = tmNode ? (tmNode.children || []) : [];
+      return cap200(kids
+        .filter((n) => !match || match(n.name))
+        .map((n) => ({ node: n, v: metric === 'alloc' ? (n.alloc ?? n.size) : n.size }))
+        .filter((o) => o.v > 0));
+    }, [tmNode, metric, view, fileTypes, match]);
 
     const tiles = useMemo(() => {
       if (!tmItems.length) return [];
@@ -393,6 +482,7 @@
 
     return html`
       <div style="${{ display:'flex', flexDirection:'column', height:'100%' }}">
+        ${!isAdmin ? html`<div className="admin-banner" role="status">⚠ Mode non-admin — folder terproteksi (System Volume Information, $Recycle.Bin, dll.) tidak tampil. Jalankan sebagai Administrator untuk hasil penuh.</div>` : null}
         <div className="stripe">
           <div className="bar">
             ${drives.length ? html`
@@ -409,6 +499,12 @@
               <button className="${metric === 'size' ? 'on' : ''}" onClick="${() => setMetric('size')}">Size</button>
               <button className="${metric === 'alloc' ? 'on' : ''}" onClick="${() => setMetric('alloc')}">Allocated</button>
             </div>
+            <div className="tabs" role="group" aria-label="View">
+              <button className="${view === 'files' ? 'on' : ''}" onClick="${() => setView('files')}">Files</button>
+              <button className="${view === 'types' ? 'on' : ''}" onClick="${() => setView('types')}">File Types</button>
+            </div>
+            <input className="find" type="text" value="${filter}" placeholder="Filter…" aria-label="Filter results"
+                   onChange="${e => setFilter(e.target.value)}"/>
           </div>
           ${tree ? html`
             <div className="stats">
@@ -434,24 +530,46 @@
           </div>` : html`
           <div className="cols" key="${scanKey}">
             <div className="panel left">
-              <table>
-                <thead><tr><th>Name</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
-                <tbody>
-                  ${(() => {
-                    const kids = tree.children || [];
-                    const shown = kids.length > MAX_ROWS && !showRootMore ? kids.slice(0, MAX_ROWS) : kids;
-                    return shown.map((c, i) => html`
-                      <${Row} key="${i}" node="${c}" depth="${0}" total="${total}"
-                             expanded="${expanded}" selected="${selected}" metric="${metric}"
-                             onToggle="${toggle}" onSelect="${select}"
-                             onShowAll="${showAll}" basePath="${tree.path}"/>`);
-                  })()}
-                  ${tree.children && tree.children.length > MAX_ROWS && !showRootMore ? html`
-                    <tr className="more" tabIndex="0" role="button" onClick="${() => setShowRootMore(true)}" onKeyDown="${(e) => { if (e.key==='Enter'||e.key===' ') setShowRootMore(true); }}">
-                      <td colspan="4">⋯ and ${tree.children.length - MAX_ROWS} more — Show all</td>
-                    </tr>` : null}
-                </tbody>
-              </table>
+              ${view === 'types' ? html`
+                <table>
+                  <thead><tr><th>Type</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
+                  <tbody>
+                    ${(() => {
+                      const rows = fileTypes.filter((g) => !match || match(g.name)).slice(0, MAX_ROWS);
+                      return rows.map((g, i) => html`
+                        <tr key="${i}" tabIndex="0" role="row">
+                          <td>
+                            <span className="spacer"/>
+                            <span className="mark" style="${{ background: extColor(g.name) }}"/>
+                            ${g.name}
+                            <span className="dim-count"> (${g.count})</span>
+                          </td>
+                          <td className="num">${fmt(metric === 'alloc' ? g.alloc : g.size)}</td>
+                          <td className="pct">${((metric === 'alloc' ? g.alloc : g.size) / total * 100).toFixed(1) + '%'}</td>
+                          <td><span className="sizebar" style="${{ width: Math.min(120, ((metric === 'alloc' ? g.alloc : g.size) / (total || 1)) * 100 * 1.2) }}"/></td>
+                        </tr>`);
+                    })()}
+                  </tbody>
+                </table>` : html`
+                <table>
+                  <thead><tr><th>Name</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
+                  <tbody>
+                    ${(() => {
+                      let kids = tree.children || [];
+                      if (match) kids = kids.filter((c) => match(c.name));
+                      const shown = kids.length > MAX_ROWS && !showRootMore ? kids.slice(0, MAX_ROWS) : kids;
+                      return shown.map((c, i) => html`
+                        <${Row} key="${i}" node="${c}" depth="${0}" total="${total}"
+                               expanded="${expanded}" selected="${selected}" metric="${metric}"
+                               onToggle="${toggle}" onSelect="${select}"
+                               onShowAll="${showAll}" basePath="${tree.path}"/>`);
+                    })()}
+                    ${tree.children && tree.children.length > MAX_ROWS && !showRootMore ? html`
+                      <tr className="more" tabIndex="0" role="button" onClick="${() => setShowRootMore(true)}" onKeyDown="${(e) => { if (e.key==='Enter'||e.key===' ') setShowRootMore(true); }}">
+                        <td colspan="4">⋯ and ${tree.children.length - MAX_ROWS} more — Show all</td>
+                      </tr>` : null}
+                  </tbody>
+                </table>`}
             </div>
             <div className="panel right">
               ${tmItems.length ? html`
@@ -473,7 +591,7 @@
           </div>`}
 
         <div className="foot">
-          <span>${err ? '⚠ ' + err : (tree ? (tree.path || tree.name) : '')}</span>
+          <span>${err ? '⚠ ' + err : (note ? '⚠ ' + note : (tree ? (tree.path || tree.name) : ''))}</span>
         </div>
       </div>`;
   }

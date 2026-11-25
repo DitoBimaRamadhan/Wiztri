@@ -68,6 +68,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     hasListDrives: !!(window.wiztri && window.wiztri.listDrives),
     hasOpenPath: !!(window.wiztri && window.wiztri.openPath),
     hasOnProgress: !!(window.wiztri && window.wiztri.onProgress),
+    hasIsAdmin: !!(window.wiztri && window.wiztri.isAdmin),
     buttons: Array.from(document.querySelectorAll('button')).map(b=>b.textContent.trim()),
     bodyTextLen: document.body.innerText.length
   })`;
@@ -82,6 +83,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('window.wiztri.listDrives ada', out && out.hasListDrives);
   check('window.wiztri.openPath ada', out && out.hasOpenPath);
   check('window.wiztri.onProgress ada', out && out.hasOnProgress);
+  check('window.wiztri.isAdmin ada', out && out.hasIsAdmin);
   check('ada tombol Scan di UI', out && Array.isArray(out.buttons) && out.buttons.includes('Scan'));
   check('body menampilkan teks (bukan kosong)', out && out.bodyTextLen > 0);
   if (out) console.log('  UI stats → appHTML=' + out.appHTML + ' bodyLen=' + out.bodyTextLen + ' buttons=' + JSON.stringify(out.buttons));

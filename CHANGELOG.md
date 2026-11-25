@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 — 2026-11-25
+### Kecepatan & keandalan scan (perombakan scanner MFT)
+- **Rust (`wiztri-scan.exe`)**: mode baru `--serve <drive|file-volume>` — baca `$MFT` SEKALI per drive lalu layani banyak query subtree lewat stdin/stdout (framing: baris panjang + JSON). Ekspansi folder tidak lagi membaca ulang seluruh volume (sebelumnya tiap scan/expand me-rescan penuh). Progres nyata dikirim ke stderr (`P <count> <total>`). `-` = akar volume. Emit catatan `note:"depth_truncated"` bila ada folder >128 level terpotong.
+- **main.js**: server MFT persisten menggantikan temp-file + anak-per-request (hilangkan race baca temp → rescan Node diam-diam). Progres MFT kini asli, bukan palsu 100%. Scan diserialisasi (single-flight) — hasil tidak lagi tumpang-tindih, cocok untuk klik Scan/Enter berulang. Fallback Node single-pass tanpa prescan ganda (hemat I/O 2×). Deteksi mode Administrator (`is-admin`) & lokasi exe otomatis (bundel / target build lokal).
+- **renderer**: banner peringatan saat non-admin (folder terproteksi tidak tampil); hasil scan basi dibuang lewat token (cegah nimpa dari scan lama); catatan truncation ditampilkan di bilah bawah.
+
 ## 0.3.0 — 2026-11-25
 ### Perbaikan bug
 - **Rust (`wiztri-scan.exe`)**: terima arg ke-2 (jalur filter) → emit subtree berakar di folder tersebut, bukan seluruh volume. Mode MFT kini bisa dipakai untuk *folder manapun*, bukan hanya root drive.

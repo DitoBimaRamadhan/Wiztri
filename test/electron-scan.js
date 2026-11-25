@@ -95,8 +95,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('ada file (tanpa children) di hasil', out && out.hasFile === true);
   check('root punya anak', out && out.kids > 0);
   check('event progres dikirim', out && out.progCount > 0);
-  check('progress memuat total > 0', out && out.progFirst && out.progFirst.total > 0);
+  // MFT / fallback Node single-pass: total boleh 0 (indeterminate). Bila >0,
+  // count tidak boleh melampaui total.
+  check('progress memuat total >= 0', out && out.progFirst && out.progFirst.total >= 0);
   check('progress memuat count >= 0', out && out.progFirst && out.progFirst.count >= 0);
+  check('progress count <= total (bila total>0)', out && out.progFirst && (out.progFirst.total === 0 || out.progFirst.count <= out.progFirst.total));
   check('progress memuat dir', out && out.progFirst && typeof out.progFirst.dir === 'string');
   check('scan subfolder (lazy) mengembalikan objek', !!out && !!out.subName);
   check('subfolder path benar', out && path.resolve(out.subPath) === path.join(SCANPATH, 'vendor'));
