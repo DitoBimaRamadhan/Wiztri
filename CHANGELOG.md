@@ -5,6 +5,7 @@
 - **Rust (`wiztri-scan.exe`)**: terima arg ke-2 (jalur filter) → emit subtree berakar di folder tersebut, bukan seluruh volume. Mode MFT kini bisa dipakai untuk *folder manapun*, bukan hanya root drive.
 - **main.js**: `scan` kini mengarahkan SEMUA jalur drive lokal (root maupun subfolder) ke MFT; fallback Node hanya dipakai bila exe tak tersedia / tanpa admin / bukan NTFS. Karena MFT membaca mentah `$MFT`, ACL folder terproteksi (System Volume Information, $Recycle.Bin, AppData pengguna lain, WinSxS, dll.) ikut terbaca — tidak ada lagi `access_denied` saat berjalan sebagai Administrator.
 - **renderer**: teks petunjuk kosong diperbarui (sebutkan folder terproteksi).
+- **Lazy scan (fix C:\ / D:\ tidak bisa di-scan)**: main kini menahan tree penuh di memori (cache per path) dan hanya mengirim slice kecil (ringkasan + anak langsung). Renderer memuat anak folder sesuai kebutuhan saat expand. Ini mencegah tree jutaan node dikirim utuh lewat IPC (structured clone) yang membuat renderer hang/OOM pada root drive. `server.js` (mode web) mengikuti kontrak slice yang sama.
 
 ## Audit perbaikan II — 2026-11-25
 ### Perbaikan bug (hasil audit oleh agent paralel)

@@ -47,32 +47,38 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(1200);
 
   const esc = JSON.stringify(SCANPATH + path.sep);
+  const subEsc = JSON.stringify(path.join(SCANPATH, 'vendor') + path.sep);
   const expr = `(async () => {
     const prog = [];
     window.wiztri.onProgress(d => prog.push(d));
     const t = await window.wiztri.scan(${esc});
+    // Scan subfolder (lazy/cache): harus kembali slice berakar di vendor.
+    const sub = await window.wiztri.scan(${subEsc});
     return JSON.stringify({
       name: t.name, pathKey: t.path, size: t.size, alloc: t.alloc,
       kids: (t.children||[]).length,
       err: t.error || null,
       shapeOk: (() => {
         let ok = true;
-        const walk = n => {
-          if ('children' in n) {
-            // kunci children bila ada harus array (folder); non-array = cacat
-            if (!Array.isArray(n.children)) { ok = false; return; }
-            n.children.forEach(walk);
-          } else {
-            // file: tak boleh punya kunci children
-            // (sudah tercover oleh cabang 'children' in n; file tak punya)
-          }
-          if (typeof n.size !== 'number' || n.size < 0) ok = false;
-        };
-        (t.children||[]).forEach(walk);
+        (t.children||[]).forEach(c => {
+          if (typeof c.size !== 'number' || c.size < 0) ok = false;
+          if ('children' in c) ok = false;      // slice lazy: anak adalah daun (tanpa children)
+          if (c.dir !== undefined && typeof c.dir !== 'boolean') ok = false;
+        });
         return ok;
       })(),
-      hasDir: (t.children||[]).some(c => Array.isArray(c.children)),
-      hasFile: (t.children||[]).some(c => !('children' in c)),
+      hasDir: (t.children||[]).some(c => c.dir === true),
+      hasFile: (t.children||[]).some(c => !c.dir),
+      subName: sub && sub.name, subPath: sub && sub.path,
+      subKids: sub ? (sub.children||[]).length : -1,
+      subShapeOk: (() => {
+        let ok = true;
+        (sub.children||[]).forEach(c => {
+          if (typeof c.size !== 'number' || c.size < 0) ok = false;
+          if ('children' in c) ok = false;
+        });
+        return ok;
+      })(),
       progCount: prog.length,
       progFirst: prog[0] || null
     });
@@ -92,7 +98,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('progress memuat total > 0', out && out.progFirst && out.progFirst.total > 0);
   check('progress memuat count >= 0', out && out.progFirst && out.progFirst.count >= 0);
   check('progress memuat dir', out && out.progFirst && typeof out.progFirst.dir === 'string');
+  check('scan subfolder (lazy) mengembalikan objek', !!out && !!out.subName);
+  check('subfolder path benar', out && path.resolve(out.subPath) === path.join(SCANPATH, 'vendor'));
+  check('subfolder hasil slice valid', out && out.subShapeOk === true);
+  check('subfolder punya anak', out && out.subKids >= 0);
   console.log('  hasil scan → size=' + (out && out.size) + ' kids=' + (out && out.kids) + ' err=' + (out && out.err));
+  console.log('  subfolder → name=' + (out && out.subName) + ' kids=' + (out && out.subKids));
   console.log('  progres → event=' + (out && out.progCount) + ' first={count=' + (out && out.progFirst && out.progFirst.count) + ', total=' + (out && out.progFirst && out.progFirst.total) + '}');
 
   ws.close();

@@ -63,22 +63,21 @@ const get = (url) => new Promise((resolve, reject) => {
   if (t) {
     check('root punya name/path/size/children', !!(t.name && t.path && typeof t.size === 'number' && Array.isArray(t.children)));
     check('root path benar', path.resolve(t.path) === SCANROOT);
-    // semua file tanpa `children`; semua folder dengan `children` array
-    let shapeOk = true, hiddenSeen = false;
-    const walk = (n) => {
-      const isDir = Array.isArray(n.children);
-      if (isDir) n.children.forEach(walk);
-      else shapeOk = shapeOk && !('children' in n);
-      if (n.hidden) hiddenSeen = true;
-    };
-    t.children.forEach(walk);
-    check('file tanpa kunci children / folder dgn children', shapeOk);
+    // Kontrak slice lazy: root punya children (anak LANGSUNG); tiap anak
+    // tanpa kunci `children` (daun), size>=0, dan `dir` boolean bila ada.
+    let shapeOk = true, hiddenSeen = false, hasDir = false, hasFile = false;
+    for (const c of t.children) {
+      if (typeof c.size !== 'number' || c.size < 0) shapeOk = false;
+      if ('children' in c) shapeOk = false;
+      if (c.dir !== undefined && typeof c.dir !== 'boolean') shapeOk = false;
+      if (c.dir === true) hasDir = true;
+      if (!c.dir) hasFile = true;
+      if (c.hidden) hiddenSeen = true;
+    }
+    check('anak slice (tanpa children), size>=0, dir boolean', shapeOk);
     check('folder tersembunyi ditandai', hiddenSeen);
-    // nilai size tidak negatif & anak lebih kecil dari total
-    let nonneg = true;
-    const walk2 = (n) => { if (n.size < 0) nonneg = false; (n.children || []).forEach(walk2); };
-    walk2(t);
-    check('semua size >= 0', nonneg);
+    check('ada folder (dir:true)', hasDir);
+    check('ada file', hasFile);
   }
 
   // 2) traversal/tatak: ../public2 tidak boleh serve

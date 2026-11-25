@@ -127,25 +127,94 @@ function tryMftPath(root) {
   return tryMft(args);
 }
 
+// ---------------------------------------------------------------------------
+// Lazy scan: main selalu menahan tree PENUH di memori (cache per path), tetapi
+// hanya mengirimkan "slice" kecil (ringkasan + anak LANGSUNG) ke renderer.
+// Renderer memuat anak folder sesuai kebutuhan (expanding). Ini mencegah
+// tree jutaan node dikirim utuh lewat IPC (structured clone) yang membuat
+// renderer hang/OOM saat memindai root drive seperti C:\ / D:\.
+// ---------------------------------------------------------------------------
+const treeCache = new Map(); // path -> tree penuh berakar di path tsb
+
+function makeSlice(node) {
+  const base = node.path || '';
+  const kids = (node.children || []).map((c) => ({
+    name: c.name,
+    path: c.path || (base + (base && base.slice(-1) !== '\\' ? '\\' : '') + c.name),
+    size: c.size || 0,
+    alloc: c.alloc ?? c.size ?? 0,
+    dir: Array.isArray(c.children),
+    symlink: !!c.symlink,
+    hidden: !!c.hidden,
+    error: c.error || undefined,
+  }));
+  return {
+    name: node.name,
+    path: base,
+    size: node.size || 0,
+    alloc: node.alloc ?? node.size ?? 0,
+    dir: true,
+    children: kids,
+  };
+}
+
+// Turun dari tree cache mengikuti komponen relatif (case-insensitive).
+function descend(tree, parts) {
+  let cur = tree;
+  for (const p of parts) {
+    const kid = (cur.children || []).find(
+      (c) => Array.isArray(c.children) && c.name.toLowerCase() === p.toLowerCase()
+    );
+    if (!kid) return null;
+    cur = kid;
+  }
+  return cur;
+}
+
+// Coba layani slice dari cache — path sama atau subtree dari leluhur yang sudah dibangun.
+function sliceFromCache(base) {
+  const bb = base.toLowerCase();
+  for (const [p, tree] of treeCache) {
+    if (!p || typeof p !== 'string') continue;
+    if (base === p) return makeSlice(tree);
+    const pb = p.toLowerCase();
+    if (bb.startsWith(pb)) {
+      const rel = base.slice(p.length).split(/[\\\/]+/).filter(Boolean);
+      const node = descend(tree, rel);
+      if (node) { treeCache.set(base, node); return makeSlice(node); }
+    }
+  }
+  return null;
+}
+
 ipcMain.handle('scan', async (_evt, root) => {
   const base = root || process.env.SYSTEMDRIVE || 'C:\\';
+  const fromCache = sliceFromCache(base);
+  if (fromCache) return fromCache;
+
+  let full = null;
   const mft = await tryMftPath(base);
-  if (mft) return mft;
-  // Prescan: hitung total node utk persentase progres.
-  const total = await countNodes(base);
-  const state = { count: 1 }; // akar dihitung sekali; anak dihitung di nodeScan
-  let lastSend = 0;
-  const c = (count, dir) => {
-    const now = Date.now();
-    if (now - lastSend < 120) return; // throttle: maks ~8 event/detik
-    lastSend = now;
-    _evt.sender.send('scan-progress', { count, total, dir });
-  };
-  c(0, base);
-  const tree = await nodeScan(base, c, state);
-  // event akhir dikirim langsung tanpa throttle agar UI selalu sampai 100%
-  _evt.sender.send('scan-progress', { count: state.count, total, dir: '' });
-  return tree;
+  if (mft && !mft.error) {
+    full = mft;
+  } else {
+    // Fallback Node: prescan utk % progres, lalu walk penuh.
+    const total = await countNodes(base);
+    const state = { count: 1 }; // akar dihitung sekali; anak dihitung di nodeScan
+    let lastSend = 0;
+    const c = (count, dir) => {
+      const now = Date.now();
+      if (now - lastSend < 120) return; // throttle: maks ~8 event/detik
+      lastSend = now;
+      _evt.sender.send('scan-progress', { count, total, dir });
+    };
+    c(0, base);
+    full = await nodeScan(base, c, state);
+    // event akhir dikirim langsung tanpa throttle agar UI selalu sampai 100%
+    _evt.sender.send('scan-progress', { count: state.count, total, dir: '' });
+  }
+
+  treeCache.set(base, full);
+  return makeSlice(full);
 });
 
 function createWindow() {

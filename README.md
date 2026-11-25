@@ -14,6 +14,7 @@ Disk usage analyzer untuk Windows, gaya WizTree/TreeSize. Membaca `$MFT` (NTFS) 
 - **Buka di Explorer** — tombol ↔� per baris membuka folder/file di Windows Explorer.
 - **Penanda** — folder tersembunyi/sistem, symlink/junction, error akses.
 - **Live progress** — persentase + jumlah item saat memindai (mode fallback Node).
+- **Lazy loading** — tree penuh di-cache di proses utama; UI memuat anak folder sesuai kebutuhan, sehingga drive dengan jutaan file (mis. `C:\`) tetap responsif saat menyusuri folder.
 - Offline, tanpa CDN font, UI gelap berbahasa Indonesia.
 
 ## Arsitektur

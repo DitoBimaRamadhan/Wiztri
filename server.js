@@ -54,6 +54,23 @@ async function scan(abs, depth = 0) {
   return { name: path.basename(abs) || abs, path: abs, size, children };
 }
 
+// Slice lazy: hanya kirim ringkasan + anak LANGSUNG (bukan tree penuh),
+// selaras dengan main.js — renderer memuat anak folder sesuai kebutuhan.
+function makeSlice(node) {
+  const base = node.path || '';
+  const kids = (node.children || []).map((c) => ({
+    name: c.name,
+    path: c.path || (base + (base && base.slice(-1) !== '\\' ? '\\' : '') + c.name),
+    size: c.size || 0,
+    alloc: c.alloc ?? c.size ?? 0,
+    dir: Array.isArray(c.children),
+    symlink: !!c.symlink,
+    hidden: !!c.hidden,
+    error: c.error || undefined,
+  }));
+  return { name: node.name, path: base, size: node.size || 0, alloc: node.alloc ?? node.size ?? 0, dir: true, children: kids };
+}
+
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
 
 http.createServer(async (req, res) => {
@@ -70,7 +87,7 @@ http.createServer(async (req, res) => {
     try {
       const t = await scan(root);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(t));
+      res.end(JSON.stringify(makeSlice(t)));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'text/plain' });
       res.end(String(e));

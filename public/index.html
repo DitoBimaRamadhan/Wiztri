@@ -119,7 +119,7 @@
 <div id="app"></div>
 <script>
 (() => {
-  const { useState, useEffect, useMemo } = React;
+  const { useState, useEffect, useMemo, useReducer } = React;
   const html = htm.bind(React.createElement);
   const W = window.wiztri;
 
@@ -189,11 +189,11 @@
   const tileDark = (c) => c === '#FFB454' || c === '#3FD6CB';
 
   function Row({ node, depth, total, expanded, selected, metric, onToggle, onSelect, basePath }) {
-    const isDir = Array.isArray(node.children);
+    const isDir = node.dir === true;
     const val = metric === 'alloc' ? (node.alloc ?? node.size) : node.size;
     const pct = total > 0 ? (val / total) * 100 : 0;
     const open = expanded.has(node);
-    const ownPath = basePath ? (basePath === '\\' ? '\\' + node.name : basePath + '\\' + node.name) : node.name;
+    const ownPath = node.path || (basePath ? (basePath === '\\' ? '\\' + node.name : basePath + '\\' + node.name) : node.name);
     const openPath = (e) => { e.stopPropagation(); if (W && W.openPath) W.openPath(ownPath); };
     return html`
       <React.Fragment>
@@ -230,6 +230,7 @@
     const [prog, setProg] = useState(null);
     const [drives, setDrives] = useState([]);
     const [err, setErr] = useState(null);
+    const [, bump] = useReducer((x) => x + 1, 0); // paksa re-render setelah muat anak malas
 
     useEffect(() => {
       if (!W) return;
@@ -266,13 +267,33 @@
       } finally { setBusy(false); setProg(null); }
     }
 
-    function toggle(n) {
+    // Muat anak folder secara malas (lazy) lewat scan(path) — hanya saat dibuka.
+    async function ensureChildren(n) {
+      if (!n || n.dir !== true || n._loaded) return;
+      n._loading = true;
+      try {
+        const s = W
+          ? await W.scan(n.path)
+          : await fetch('/api/scan?root=' + encodeURIComponent(n.path)).then(r => r.ok ? r.json() : Promise.reject(new Error('scan failed')));
+        n.children = s.children || [];
+        n.error = s.error || undefined;
+      } catch (e) {
+        n.children = [];
+        n.error = String(e);
+      }
+      n._loaded = true;
+      n._loading = false;
+    }
+
+    async function toggle(n) {
+      if (n.dir) { await ensureChildren(n); bump(); }
       setExpanded(prev => { const s = new Set(prev); if (s.has(n)) s.delete(n); else s.add(n); return s; });
     }
-    function select(n) {
+    async function select(n) {
       if (n._agg) return;
+      if (n.dir) { await ensureChildren(n); bump(); }
       setSelected(n);
-      if (Array.isArray(n.children)) setExpanded(prev => new Set(prev).add(n));
+      if (n.dir) setExpanded(prev => new Set(prev).add(n));
     }
 
     const tmNode = useMemo(() => {
