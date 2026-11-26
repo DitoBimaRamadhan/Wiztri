@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 — 2026-11-26
+### Perbaikan
+- **Installer**: `wiztri setup.exe` sebelumnya hanya pointer Git-LFS 133 B (belum bersih, tak bisa diinstal) — dibangun ulang jadi NSIS asli ±82 MB.
+- **Pengujian**: `npm test` kini juga menjalankan `serve.spec.mjs` & `ui-logic.spec.mjs` (sebelumnya hanya 4 suite).
+
 ## 0.3.1 — 2026-11-25
 ### Kecepatan & keandalan scan (perombakan scanner MFT)
 - **Rust (`wiztri-scan.exe`)**: mode baru `--serve <drive|file-volume>` — baca `$MFT` SEKALI per drive lalu layani banyak query subtree lewat stdin/stdout (framing: baris panjang + JSON). Ekspansi folder tidak lagi membaca ulang seluruh volume (sebelumnya tiap scan/expand me-rescan penuh). Progres nyata dikirim ke stderr (`P <count> <total>`). `-` = akar volume. Emit catatan `note:"depth_truncated"` bila ada folder >128 level terpotong.
