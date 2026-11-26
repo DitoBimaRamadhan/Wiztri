@@ -2,12 +2,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('wiztri', {
-  scan: (root) => ipcRenderer.invoke('scan', root),
+  scan: (root, opts) => ipcRenderer.invoke('scan', root, opts),
   listDrives: () => ipcRenderer.invoke('list-drives'),
   openPath: (target) => ipcRenderer.invoke('open-path', target),
   isAdmin: () => ipcRenderer.invoke('is-admin'),
   relaunchAdmin: () => ipcRenderer.invoke('relaunch-admin'),
-  filesAll: (root, offset, limit, q) => ipcRenderer.invoke('files-all', root, offset, limit, q),
+  filesAll: (root, offset, limit, q, metric) => ipcRenderer.invoke('files-all', root, offset, limit, q, metric),
   // Kembalikan fungsi unsub.
   onProgress: (cb) => {
     const handler = (_e, data) => cb(data);

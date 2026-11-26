@@ -6,7 +6,7 @@ Disk usage analyzer untuk Windows, gaya WizTree/TreeSize. Membaca `$MFT` (NTFS) 
 
 ## Fitur
 
-- **Mode cepat (MFT)** — scan via pembacaan mentah `$MFT` di Rust untuk drive maupun folder mana pun; butuh hak Administrator. Scanner berjalan sebagai server persisten: `$MFT` dibaca sekali per drive lalu melayani scan subfolder/ekspansi tanpa membaca ulang volume.
+- **Mode cepat (MFT)** — scan via pembacaan mentah `$MFT` di Rust untuk drive maupun folder mana pun; butuh hak Administrator. Scanner berjalan sebagai server persisten: `$MFT` dibaca sekali per drive lalu melayani scan subfolder/ekspansi tanpa membaca ulang volume. Parse paralel lintas-core + scan-awal sliced → tampilan awal dalam hitungan detik bahkan pada volume jutaan file.
 - **Fallback Node** — walk sistem file (`fs.readdir` paralel, single-pass) saat MFT tak bisa dibuka (tanpa admin / bukan NTFS).
 - **Treemap squarified** — visualisasi proporsi ukuran; warna per ekstensi utk file, drill-down folder + tombol kembali ke akar; klik baris/warna untuk menelusuri.
 - **Tabel ukuran** — kolom Size / Allocated, persentase, bar ukuran; **sortable** (klik header Name/Size/Allocated); expand/collapse folder.

@@ -56,9 +56,14 @@ async function scan(abs, depth = 0) {
 
 // Slice lazy: hanya kirim ringkasan + anak LANGSUNG (bukan tree penuh),
 // selaras dengan main.js — renderer memuat anak folder sesuai kebutuhan.
-function makeSlice(node) {
+// Cap anak per slice (cegah payload raksasa untuk folder padat).
+const SLICE_CHILD_CAP = 2000;
+function makeSlice(node, full = false) {
   const base = node.path || '';
-  const kids = (node.children || []).map((c) => ({
+  const allKids = node.children || [];
+  const cap = full ? Infinity : SLICE_CHILD_CAP;
+  const truncated = allKids.length > cap;
+  const kids = allKids.slice(0, cap).map((c) => ({
     name: c.name,
     path: c.path || (base + (base && base.slice(-1) !== '\\' ? '\\' : '') + c.name),
     size: c.size || 0,
@@ -68,7 +73,7 @@ function makeSlice(node) {
     hidden: !!c.hidden,
     error: c.error || undefined,
   }));
-  return { name: node.name, path: base, size: node.size || 0, alloc: node.alloc ?? node.size ?? 0, dir: true, children: kids };
+  return { name: node.name, path: base, size: node.size || 0, alloc: node.alloc ?? node.size ?? 0, dir: true, children: kids, truncated: truncated || undefined };
 }
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
@@ -84,12 +89,18 @@ http.createServer(async (req, res) => {
       res.end('root harus drive lokal (mis. C:\\...)');
       return;
     }
+    // Client putus sebelum respon selesai -> jangan biarkan 'error' jadi
+    // uncaughtException yang mematikan server.
+    res.on('error', () => {});
     try {
       const t = await scan(root);
+      if (res.destroyed) return;
+      const full = u.searchParams.get('full') === '1';
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify(makeSlice(t)));
+      res.end(JSON.stringify(makeSlice(t, full)));
     } catch (e) {
-      console.error('[scan]', e); // detail hanya ke log internal
+      console.error('[scan] failed:', e && e.message ? e.message : String(e)); // tanpa path penuh
+      if (res.destroyed) return;
       res.writeHead(500, { 'Content-Type': 'text/plain' });
       res.end('scan failed');
     }

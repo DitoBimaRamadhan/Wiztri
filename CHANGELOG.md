@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.3.3 — 2026-11-27
+### Kecepatan scan (target ≤ 3 detik)
+- **Parse MFT paralel (Rust)** — `load_vol` membagi chunk $MFT ke semua core (`std::thread::scope`), tanpa dependency baru. 500k record: 3,5s → 1,9s.
+- **Scan awal capped** — query pertama meminta slice terbatas (maks 2000 anak/level), respons instan walau drive jutaan file (2M record: 11s → 2,1s). Tree penuh tetap tersedia on-demand.
+- **Pre-sort cache** — `files-all` pre-sort `bySize`/`byAlloc` sekali; paginasi slice tanpa `O(n log n)`/halaman. `emit_children` pakai peta anak terurut (tanpa sort ulang per query).
+### Perbaikan dari audit lanjutan
+- **Path ber-spasi benar** — protokol serve `"<path> [limit]"` kini parse limit dari kanan (hanya bila token terakhir numerik); `C:\Program Files` dsb. tidak lagi terpotong → MFT tetap terpakai utk subfolder.
+- **Expand subfolder full** — `ensureChildren` minta tree penuh (`{full:true}`); data >2000 anak tidak hilang senyap (flag `truncated`/note ditampilkan).
+- **All Files anti-OOM** — `ALL_RENDER_CAP=2000` (windowing-lite) cegah DOM/state membengkak.
+- **`serverQuery` timeout bertingkat** — 30s utk slice, 120s utk full (cegah false-fire pada volume lambat); `svc.onProgress` dipulihkan (anti-clobber antar query).
+- **Note truncation dipisah** — `depth_truncated` vs `limit_truncated`.
+- **Harness benchmark** — `bench/gen_fake.js` & `bench/bench_scan.js` dibetulkan (undercount record, label parse akurat).
+
+## Audits perbaikan (0.3.2+) — 2026-11-27
+Perombakan hasil audit 5 agent paralel (main/preload/server, renderer, Rust scanner, security, test suite).
+### Rust scanner (`wiztri-scan.exe`)
+- **Cegah panic off-by-one** — guard baca atribut MFT `o+8 <= len` → `o+8 < len` (indeks `buf[o+8]` bisa = len → index-out-of-bounds pada file-volume korup/uji). Berlaku di `parse_record` & `parse_mft_bytes`.
+- **Anti-OOM respon JSON** — `emit_children` kini berhenti bila `out.len()` ≥ 64 MB dan menandai `TRUNCATED` (sebelumnya seluruh subtree dibangun sebagai satu String tanpa batas → OOM pada volume raksasa).
+- **Progres mencapai 100%** — baris `P <count> <total>` sekarang juga dicetak saat `remaining==0` dan satu baris final bila total bukan kelipatan 4096 (sebelumnya stuck di kelipatan terakhir / volume kecil tanpa progres sama sekali).
+- **Error mode serve tak desync** — saat `load_vol` gagal, error ditulis dengan framing length-prefixed (sebelumnya JSON mentah ke stdout → klien misparse).
+- **Error I/O tengah baca** — `Err` saat baca `$MFT` kini `return Err(read_mft)` (sebelumnya volume kosong senyap tanpa peringatan); hanya EOF yang normal.
+- **Validasi fixup USN** — 2 byte terakhir sektor harus == USN asli sebelum ditimpa (tolak rekaman korup senyap).
+- **Geometri minimum** — `rec_size < 512` ditolak (cegah `rec_size=2` dari boot sector rusak).
+- **Arg kosong aman** — `--serve ""` tidak lagi panic (fallback `C`).
+
+### main.js
+- **`files-all` sort sekali, bukan per-panggilan** — cache kini pre-sort `bySize` & `byAlloc`; paginasi tinggal slice (sebelumnya `O(n log n)` per halaman → freeze pada volume jutaan file). Filter re-sort hanya subset hasil filter.
+- **Timeout watchdog per query** — `serverQuery` timeout 30s → resolve null + bunuh server (cegah scan menggantung selamanya saat drive dicabut / geometri patologis).
+- **`relaunch-admin` tanpa escaping rapuh** — path di-encode via `-EncodedCommand` base64 UTF-16LE (sebelumnya interpolasi string PowerShell berisiko salah parse bila path berisi kutip).
+- **Validasi sender IPC** — semua `ipcMain.handle` (`scan`, `files-all`, `open-path`, `list-drives`, `is-admin`, `relaunch-admin`) hanya menerima event dari `webContents` jendela utama (`trustedSender`).
+- **`will-navigate` dikunci** — hanya izinkan URL `public/index.html` app (sebelumnya semua `file://` diizinkan → halaman lokal lain bisa mewarisi bridge preload).
+- **Cap slice anak** — `makeSlice` maks 2000 anak langsung + flag `truncated` (cegah payload IPC raksasa untuk folder padat seperti WinSxS).
+
+### server.js (mode web dev)
+- **Aman saat client putus** — `res.on('error')` menyerap error (sebelumnya uncaughtException → crash server).
+- **Log tanpa path penuh** — `console.error` hanya message, bukan `e` (path sensitif).
+- **Cap slice anak** — sama dgn main.js.
+
+### preload.js
+- **`filesAll` meneruskan `metric`** — arg ke-5 kini sampai ke main (sebelumnya dibuang → sort Allocated di All Files selalu pakai size).
+
+### renderer (`public/index.html`)
+- **Ganti metric me-reload All Files** — debounce effect kini bergantung `[filter, metric]` (sebelumnya ganti metric tidak reload).
+- **Alignment treemap fixed** — `cap200` re-sort setelah append "Others" agar urutan `tmItems` konsisten dengan sort desc internal `squarify` (cegah tile↔item misalignment / klik salah target).
+- **Notifikasi cap folder besar** — nota `truncated` ditampilkan di bilah bawah.
+
+### test
+- **electron-smoke** — filter noise initer Chromium yang jinak (`cache_util_win`/`disk_cache.cc` `Unable to ... cache`; artifact environment stale/locked cache, non-fatal) agar tidak jadi false positive. Total **6/6 suite PASS** (`exit=0`).
+
 ## 0.3.2 — 2026-11-26
 ### Parity WizTree
 - **Kolom sortable** — klik header **Name / Size / Allocated** utk mengurutkan (default size menurun, ala WizTree).

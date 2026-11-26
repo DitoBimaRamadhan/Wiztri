@@ -34,8 +34,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log(alive ? 'PASS — proses Electron hidup (app tetap berjalan)' : 'FAIL — proses Electron mati/exit');
   if (child.exitCode !== null) console.log('exit code:', child.exitCode);
 
-  // tangkap error penting dari stderr
+  // tangkap error penting dari stderr.
+  // Filter noise initer Chromium yang jinak (disk cache gagal init krn folder
+  // cache stale/terkunci — non-fatal, app tetap jalan) agar tidak jadi false
+  // positive; deteksi error renderer/main asli tetap utuh.
+  const BENIGN = /cache_util_win|disk_cache\.cc|Unable to (move|create).*cache/i;
   const bad = stderr.split('\n').filter((l) =>
+    !BENIGN.test(l) &&
     /Uncaught|TypeError|ReferenceError|Cannot find|Failed to load|Unable to|EADDRINUSE|is not defined|undefined is not/i.test(l)
   );
   if (bad.length) {

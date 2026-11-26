@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 // Ter-set bila ada folder > kedalaman 128 terpotong; muncul sebagai catatan di JSON.
 static TRUNCATED: AtomicBool = AtomicBool::new(false);
+// Ter-set bila limit (per-query) memotong jumlah anak/level; note berbeda.
+static TRUNCATED_LIMIT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone)]
 struct Node {
@@ -38,9 +40,14 @@ fn fixup(buf: &mut [u8], bps: usize) {
     let usoff = rd_u16(buf, 0x04) as usize;
     let count = rd_u16(buf, 0x06) as usize;
     if usoff == 0 || count < 2 || usoff + count * 2 > buf.len() { return; }
+    // USN asli (entri ke-0) — referensi utk validasi fixup.
+    let (usn_hi, usn_lo) = (buf[usoff], buf[usoff + 1]);
     for i in 1..count {
         let pos = i * bps;
         if pos >= 2 && pos <= buf.len() && usoff + i * 2 + 2 <= buf.len() {
+            // Bila 2 byte terakhir sektor != USN, rekaman korup/non-fixup -> lewati
+            // (jangan menimpa dgn nilai sampah, mencegah parse salah senyap).
+            if buf[pos - 2] != usn_hi || buf[pos - 1] != usn_lo { continue; }
             let src = [buf[usoff + i * 2], buf[usoff + i * 2 + 1]];
             buf[pos - 2..pos].copy_from_slice(&src);
         }
@@ -70,7 +77,7 @@ fn parse_record(buf: &[u8], frn: u64) -> Option<Node> {
     let mut name: Option<String> = None;
     let mut size: u64 = 0;
     let mut alloc: u64 = 0;
-    while o + 8 <= buf.len() && o < used {
+    while o + 8 < buf.len() && o < used {
         let ty = rd_u32(buf, o);
         if ty == 0xFFFFFFFF { break; }
         let len = rd_u32(buf, o + 4) as usize;
@@ -123,7 +130,7 @@ fn parse_mft_bytes(buf: &[u8]) -> Option<u64> {
     if buf.len() < 0x1c || &buf[0..4] != b"FILE" { return None; }
     let mut o = rd_u16(buf, 0x14) as usize;
     let used = rd_u32(buf, 0x18) as usize;
-    while o + 8 <= buf.len() && o < used {
+    while o + 8 < buf.len() && o < used {
         let ty = rd_u32(buf, o);
         if ty == 0xFFFFFFFF { break; }
         let len = rd_u32(buf, o + 4) as usize;
@@ -146,17 +153,39 @@ fn parse_mft_bytes(buf: &[u8]) -> Option<u64> {
     None
 }
 
-fn emit_children(p: u64, by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
-                mem: &HashMap<u64, (u64, u64)>, out: &mut String, depth: usize) {
-    if depth > 128 { TRUNCATED.store(true, Ordering::Relaxed); return; }
-    if let Some(ids) = by_parent.get(&p) {
-        let mut ids: Vec<usize> = ids.iter().copied().filter(|&i| nodes[i].frn != p).collect();
-        ids.sort_by(|&a, &b| {
+// Batas ukuran respon JSON (anti-OOM). Bila terlampaui, hentikan emit dan tandai
+// TRUNCATED agar note "depth_truncated" menyertai root.
+const MAX_RESP_BYTES: usize = 64 << 20;
+
+// Bangun peta anak per-parent yang SUDAH urut ukuran menurun, sekali per volume
+// (pasca-calc). emit_children tinggal pakai, tanpa sort ulang per query.
+fn build_sorted_children(by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
+                         mem: &HashMap<u64, (u64, u64)>) -> HashMap<u64, Vec<usize>> {
+    let mut out = HashMap::with_capacity(by_parent.len());
+    for (&p, ids) in by_parent {
+        let mut v: Vec<usize> = ids.iter().copied().filter(|&i| nodes[i].frn != p).collect();
+        v.sort_by(|&a, &b| {
             let (sa, _) = mem.get(&nodes[a].frn).copied().unwrap_or((nodes[a].size, 0));
             let (sb, _) = mem.get(&nodes[b].frn).copied().unwrap_or((nodes[b].size, 0));
             sb.cmp(&sa)
         });
-        for (i, &idx) in ids.iter().enumerate() {
+        out.insert(p, v);
+    }
+    out
+}
+
+fn emit_children(p: u64, sorted: &HashMap<u64, Vec<usize>>, nodes: &[Node],
+                mem: &HashMap<u64, (u64, u64)>, out: &mut String, depth: usize,
+                limit: usize) {
+    if depth > 128 { TRUNCATED.store(true, Ordering::Relaxed); return; }
+    if let Some(ids) = sorted.get(&p) {
+        let count = if limit == 0 { ids.len() } else { ids.len().min(limit) };
+        if count < ids.len() { TRUNCATED_LIMIT.store(true, Ordering::Relaxed); }
+        for (i, &idx) in ids.iter().take(count).enumerate() {
+            if out.len() >= MAX_RESP_BYTES {
+                TRUNCATED.store(true, Ordering::Relaxed);
+                break;
+            }
             if i > 0 { out.push(','); }
             let n = &nodes[idx];
             out.push_str("{\"name\":\"");
@@ -168,7 +197,7 @@ fn emit_children(p: u64, by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
                 out.push_str(",\"alloc\":");
                 out.push_str(&a.to_string());
                 out.push_str(",\"children\":[");
-                emit_children(n.frn, by_parent, nodes, mem, out, depth + 1);
+                emit_children(n.frn, sorted, nodes, mem, out, depth + 1, limit);
                 out.push_str("]}");
             } else {
                 // file: tanpa kunci children (sama dgn backend Node) agar renderer
@@ -207,8 +236,8 @@ fn find_node_by_path(root_frn: u64, filter: &str, by_parent: &HashMap<u64, Vec<u
 
 // Emit JSON subtree berakar di `frn` (nama + path diberi dari luar).
 fn emit_root_node(frn: u64, name: &str, path_label: &str,
-                  by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
-                  mem: &HashMap<u64, (u64, u64)>, out: &mut String) {
+                  sorted: &HashMap<u64, Vec<usize>>, nodes: &[Node],
+                  mem: &HashMap<u64, (u64, u64)>, out: &mut String, limit: usize) {
     // Prefer total subtree (mem). Untuk file (bukan folder), pakai ukuran node sendiri.
     let (mut s, mut a) = mem.get(&frn).copied().unwrap_or((0, 0));
     if let Some(n) = nodes.iter().find(|n| n.frn == frn) {
@@ -223,9 +252,17 @@ fn emit_root_node(frn: u64, name: &str, path_label: &str,
     out.push_str(",\"alloc\":");
     out.push_str(&a.to_string());
     out.push_str(",\"children\":[");
-    emit_children(frn, by_parent, nodes, mem, out, 0);
+    emit_children(frn, sorted, nodes, mem, out, 0, limit);
     out.push_str("]");
-    if TRUNCATED.load(Ordering::Relaxed) { out.push_str(",\"note\":\"depth_truncated\""); }
+    // Note: lebih dari satu penyebab -> gabung dgn koma.
+    let mut notes = Vec::new();
+    if TRUNCATED.load(Ordering::Relaxed) { notes.push("depth_truncated"); }
+    if TRUNCATED_LIMIT.load(Ordering::Relaxed) { notes.push("limit_truncated"); }
+    if !notes.is_empty() {
+        out.push_str(",\"note\":\"");
+        out.push_str(&notes.join(","));
+        out.push_str("\"");
+    }
     out.push_str("}");
 }
 
@@ -289,6 +326,9 @@ fn load_vol(target: &str, progress: bool) -> Result<Vol, String> {
         if sh >= 21 { return Err(r#"{"error":"bad_record_size"}"#.into()); }
         1usize << sh
     };
+    // Rekaman $MFT minimal satu sektor (512B); geometri < itu = korup (cegah
+    // alokasi/loop aneh untuk rec_size=2, dst).
+    if rec_size < 512 { return Err(r#"{"error":"bad_geometry"}"#.into()); }
 
     // Baca rekaman 0 utk ukuran $MFT
     let mut record0 = vec![0u8; rec_size];
@@ -313,8 +353,10 @@ fn load_vol(target: &str, progress: bool) -> Result<Vol, String> {
     let mut nodes: Vec<Node> = Vec::with_capacity(est_nodes);
     let mut by_parent: HashMap<u64, Vec<usize>> = HashMap::with_capacity(est_nodes / 8);
 
-    let chunk_recs = rec_size.saturating_mul(2048).clamp(1 << 20, 8 << 20);
+    // Chunk lebih besar biar parse paralel berguna (I/O + CPU tumpang-tindih).
+    let chunk_recs = rec_size.saturating_mul(65536).clamp(1 << 20, 32 << 20);
     let mut chunk = vec![0u8; chunk_recs];
+    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(1);
     let mut frn: u64 = 0;
     let mut remaining = total_recs;
 
@@ -322,35 +364,65 @@ fn load_vol(target: &str, progress: bool) -> Result<Vol, String> {
         let want = chunk_recs.min((remaining as usize) * rec_size);
         let mut got = 0usize;
         let mut eof = false;
+        let mut io_err: Option<String> = None;
         while got < want {
             match f.read(&mut chunk[got..want]) {
                 Ok(0) => { eof = true; break; }
                 Ok(n) => got += n,
-                Err(_) => { eof = true; break; }
+                Err(e) => { io_err = Some(e.to_string()); eof = true; break; }
             }
         }
-        // proses byte yang sudah terbaca dulu, walau EOF/error (jangan buang tail)
+        // Parse rekaman PARALEL (std thread::scope; tanpa dep). Tiap benang
+        // meng-copy rekaman sendiri utk fixup (mutasi lokal) — disjoint, aman.
         if got > 0 {
             let recs = got / rec_size;
-            for r in 0..recs {
-                let start = r * rec_size;
-                {
-                    let rec = &mut chunk[start..start + rec_size];
-                    if &rec[0..4] == b"FILE" {
-                        fixup(rec, bps);
-                        if let Some(n) = parse_record(rec, frn + r as u64) {
-                            let idx = nodes.len();
-                            by_parent.entry(n.parent).or_default().push(idx);
-                            nodes.push(n);
-                        }
-                    }
-                }
+            let nrecs = recs;
+            let c: &[u8] = &chunk;
+            let nodes_batch: Vec<Node> = std::thread::scope(|s| {
+                let per = (nrecs + workers - 1) / workers;
+                let handles: Vec<_> = (0..workers)
+                    .filter(|&si| si * per < nrecs)
+                    .map(|si| {
+                        let a = si * per;
+                        let b = ((si + 1) * per).min(nrecs);
+                        s.spawn(move || {
+                            let mut v = Vec::with_capacity(b - a);
+                            for r in a..b {
+                                let start = r * rec_size;
+                                let mut rec = c[start..start + rec_size].to_vec();
+                                if &rec[0..4] == b"FILE" {
+                                    fixup(&mut rec, bps);
+                                    if let Some(n) = parse_record(&rec, frn + r as u64) {
+                                        v.push(n);
+                                    }
+                                }
+                            }
+                            v
+                        })
+                    })
+                    .collect();
+                handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+            });
+            let base_idx = nodes.len();
+            for (li, n) in nodes_batch.into_iter().enumerate() {
+                by_parent.entry(n.parent).or_default().push(base_idx + li);
+                nodes.push(n);
             }
-            frn += recs as u64;
-            remaining -= recs as u64;
-            if progress && frn % 4096 == 0 { eprintln!("P {} {}", frn, total_recs); }
+            frn += nrecs as u64;
+            remaining -= nrecs as u64;
+            // Progres: cetak tiap 4096 record DAN di akhir (agar UI mencapai 100%).
+            if progress && (frn % 4096 == 0 || remaining == 0) {
+                eprintln!("P {} {}", frn, total_recs);
+            }
+        }
+        if let Some(e) = io_err {
+            return Err(format!("{{\"error\":\"read_mft\",\"detail\":\"{}\"}}", e));
         }
         if eof || got < want { break; }
+    }
+    // Kirim progres selesai bila total_recs bukan kelipatan 4096 (med: stuck <100%).
+    if progress && frn % 4096 != 0 {
+        eprintln!("P {} {}", frn, total_recs);
     }
     Ok(Vol { nodes, by_parent })
 }
@@ -361,16 +433,27 @@ fn load_vol(target: &str, progress: bool) -> Result<Vol, String> {
 // Protokol: respon = baris panjang (desimal), lalu JSON sepanjang itu (tanpa
 // newline). Path yang tak ketemu -> JSON {"error":"path_not_found"}.
 fn run_serve(arg: &str) -> i32 {
-    let device_mode = arg.len() == 1 && arg.chars().next().unwrap().is_ascii_alphabetic();
-    let drive = arg.chars().next().unwrap();
+    let first = arg.chars().next().unwrap_or('C');
+    let device_mode = arg.len() == 1 && first.is_ascii_alphabetic();
+    let drive = first;
     let target = if device_mode { format!("\\\\.\\{}:", drive.to_ascii_uppercase()) } else { arg.to_string() };
     let vol = match load_vol(&target, true) {
         Ok(v) => v,
-        Err(e) => { println!("{}", e); return 2; }
+        Err(e) => {
+            // Jaga protokol: tulis error dengan framing length-prefixed SAMA seperti
+            // respon normal, agar klien tidak misparse (sebelumnya JSON mentah).
+            let stdout = std::io::stdout();
+            let mut w = std::io::BufWriter::new(stdout.lock());
+            let _ = writeln!(w, "{}", e.len());
+            let _ = w.write_all(e.as_bytes());
+            let _ = w.flush();
+            return 2;
+        }
     };
     let mut mem: HashMap<u64, (u64, u64)> = HashMap::new();
     let mut seen: HashMap<u64, bool> = HashMap::new();
     calc(5, &vol.by_parent, &vol.nodes, &mut mem, &mut seen, 0);
+    let sorted = build_sorted_children(&vol.by_parent, &vol.nodes, &mem);
 
     let stdout = std::io::stdout();
     let mut w = std::io::BufWriter::new(stdout.lock());
@@ -387,8 +470,20 @@ fn run_serve(arg: &str) -> i32 {
         let line = linebuf.trim().to_string();
         if line.is_empty() || line.eq_ignore_ascii_case("quit") || line.eq_ignore_ascii_case("exit") { break; }
         TRUNCATED.store(false, Ordering::Relaxed);
-        let root_frn = if line == "-" { 5 } else {
-            match find_node_by_path(5, &line, &vol.by_parent, &vol.nodes) {
+        TRUNCATED_LIMIT.store(false, Ordering::Relaxed);
+        // Format: "<path> [limit]" — limit opsional (0 = tanpa batas) membatasi
+        // jumlah anak per level yg di-emit (slice cepat utk quest awal).
+        // PENTING: parse limit dari KANAN, hanya jika token terakhir numerik, agar
+        // path ber-spasi ("D:\My Documents") tidak terpotong di spasi pertama.
+        let (path, limit): (String, usize) = match line.rsplit_once(char::is_whitespace) {
+            Some((p, l)) => match l.trim().parse::<usize>() {
+                Ok(n) => (p.to_string(), n),
+                Err(_) => (line.clone(), 0), // token terakhir bukan angka -> seluruh baris = path
+            },
+            None => (line.clone(), 0),
+        };
+        let root_frn = if path == "-" { 5 } else {
+            match find_node_by_path(5, path, &vol.by_parent, &vol.nodes) {
                 Some(f) => f,
                 None => {
                     out.clear();
@@ -404,12 +499,12 @@ fn run_serve(arg: &str) -> i32 {
         if root_frn == 5 {
             let name_label = if device_mode { format!("{}:", drive.to_ascii_uppercase()) } else { arg.to_string() };
             let path_label = name_label.clone();
-            emit_root_node(5, &name_label, &path_label, &vol.by_parent, &vol.nodes, &mem, &mut out);
+            emit_root_node(5, &name_label, &path_label, &sorted, &vol.nodes, &mem, &mut out, limit);
         } else if let Some(idx) = vol.nodes.iter().position(|n| n.frn == root_frn) {
             let n = &vol.nodes[idx];
             let nm = n.name.clone();
-            let pl = line.replace('/', "\\");
-            emit_root_node(root_frn, &nm, &pl, &vol.by_parent, &vol.nodes, &mem, &mut out);
+            let pl = path.replace('/', "\\");
+            emit_root_node(root_frn, &nm, &pl, &sorted, &vol.nodes, &mem, &mut out, limit);
         } else {
             out.push_str(r#"{"error":"path_not_found"}"#);
         }
@@ -448,16 +543,17 @@ fn main() {
         None => 5,
     };
     calc(root_frn, &vol.by_parent, &vol.nodes, &mut mem, &mut seen, 0);
+    let sorted = build_sorted_children(&vol.by_parent, &vol.nodes, &mem);
 
     let mut out = String::with_capacity((vol.nodes.len() * 64).max(1 << 20));
     if root_frn == 5 {
         let name_label = if device_mode { raw.to_uppercase() } else { raw.clone() };
         let path_label = if device_mode { format!("{}:", raw.to_uppercase()) } else { raw.clone() };
-        emit_root_node(5, &name_label, &path_label, &vol.by_parent, &vol.nodes, &mem, &mut out);
+        emit_root_node(5, &name_label, &path_label, &sorted, &vol.nodes, &mem, &mut out, 0);
     } else if let Some(idx) = vol.nodes.iter().position(|n| n.frn == root_frn) {
         let n = &vol.nodes[idx];
         let pl = filter.as_deref().unwrap_or("").replace('/', "\\");
-        emit_root_node(root_frn, &n.name, &pl, &vol.by_parent, &vol.nodes, &mem, &mut out);
+        emit_root_node(root_frn, &n.name, &pl, &sorted, &vol.nodes, &mem, &mut out, 0);
     } else {
         println!("{}", r#"{"error":"path_not_found"}"#);
         std::process::exit(9);

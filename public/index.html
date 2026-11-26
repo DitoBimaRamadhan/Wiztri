@@ -266,6 +266,7 @@
   const tileColor = (i, isAgg) => isAgg ? MUTED : TILES[i % TILES.length];
   const tileDark = (c) => c === '#FFB454' || c === '#3FD6CB';
   const MAX_ROWS = 500; // cap render baris per level (cegah freeze/OOM pada folder raksasa)
+  const ALL_RENDER_CAP = 2000; // All Files: maks baris yang dirender sekaligus (anti-OOM, windowed-lite)
 
   // Warna treemap ala WizTree: file diwarnai berdasarkan ekstensi (hash),
   // folder memakai palet. `ext` hanya huruf kecil.
@@ -326,6 +327,7 @@
             ${node.error ? html`<span className="mark err" title="${node.error}"/>` : null}
             ${node.hidden ? html`<span className="mark hidden" title="hidden/system"/>` : null}
             ${node.symlink ? html`<span className="mark sym" title="symlink/junction"/>` : null}
+            ${node._truncated ? html`<span className="mark err" title="Folder besar: terbatas pada 2000+ anak (maks respon server)"/>` : null}
             <button className="open" title="Open in Explorer" aria-label="Open in Explorer" onClick="${openPath}">↗</button>
           </td>
           <td className="num">${fmt(val)}</td>
@@ -472,7 +474,7 @@
       if (view !== 'all' || !W || !W.filesAll) return;
       const id = setTimeout(() => { allOffsetRef.current = 0; loadAll(true); }, 250);
       return () => clearTimeout(id);
-    }, [filter]);
+    }, [filter, metric]);
 
     // isi panel kiri dipilih di sini (bukan ternary raksasa di JSX)
     const leftPanel = view === 'all' ? html`
@@ -481,12 +483,14 @@
         <table className="all">
           <thead><tr><th>Name</th><th>Path</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th></tr></thead>
           <tbody>
-            ${allRows.map((f, i) => html`
+            ${allRows.slice(0, ALL_RENDER_CAP).map((f, i) => html`
               <tr key="${i}">
                 <td>${f.name}</td>
                 <td className="dim-path">${f.path}</td>
                 <td className="num">${fmt(metric === 'alloc' ? f.alloc : f.size)}</td>
               </tr>`)}
+            ${allRows.length > ALL_RENDER_CAP ? html`
+              <tr><td colspan="3" className="dim">… hanya ${ALL_RENDER_CAP} baris pertama dirender (${allRows.length} dimuat)</td></tr>` : null}
             ${allLoading ? html`<tr><td colspan="3" className="dim">Loading…</td></tr>` : null}
             ${!allLoading && allRows.length < allTotal ? html`
               <tr className="more" tabIndex="0" role="button" onClick="${() => loadAll(false)}"
@@ -563,6 +567,8 @@
         setScanKey((k) => k + 1);
         if (n && n.error) setErr(String(n.error));
         if (n && n.note) setNote(String(n.note));
+        // Cap slice (folder padat) memotong anak langsung -> tandai di bilah bawah.
+        if (n && n.truncated) setNote((prev) => (prev ? prev + ' — ' : '') + 'Folder besar di-potong (maks 2000 anak langsung; buka subfolder utk detail).');
         if (n && n.engine) setEngine(n.engine);
       } catch (e) {
         if (tok !== scanToken.current) return;
@@ -578,11 +584,12 @@
       n._loading = true;
       try {
         const s = W
-          ? await W.scan(n.path)
+          ? await W.scan(n.path, { full: true }) // expand subfolder: minta tree penuh
           : await fetch('/api/scan?root=' + encodeURIComponent(n.path)).then(r => r.ok ? r.json() : Promise.reject(new Error('scan failed')));
         if (tok !== scanToken.current) { n._loading = false; return; } // scan baru dimulai -> buang, tidak nyangkut
         n.children = s.children || [];
         n.error = s.error || undefined;
+        n._truncated = !!s.truncated || !!s.note;
       } catch (e) {
         if (tok !== scanToken.current) { n._loading = false; return; }
         n.children = [];
@@ -614,6 +621,9 @@
         const top = list.slice(0, 200);
         const rest = list.slice(200).reduce((s, o) => s + o.v, 0);
         if (rest > 0) top.push({ node: { name: 'Others', size: rest, alloc: rest, _agg: true }, v: rest });
+        // Re-sort SETELAH append 'Others' agar urutan tmItems konsisten dengan
+        // urutan desc internal squarify — cegah tile<->item misalignment.
+        top.sort((a, b) => b.v - a.v);
         list = top;
       }
       return list;

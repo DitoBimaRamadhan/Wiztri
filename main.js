@@ -40,6 +40,10 @@ function ensureServer(drive) {
     const child = spawn(exe, ['--serve', drive], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     const readers = [];
     const svc = { drive, child, readers, onProgress: null, dead: false };
+    const failAll = () => {
+      svc.dead = true;
+      while (readers.length) { const q = readers.shift(); if (q) q(null); }
+    };
     let pend = [];       // fragmen stdout belum terproses
     let want = 0;        // byte body tersisa yang ditunggu (0 = sedang cari baris panjang)
     child.stdout.on('data', (d) => {
@@ -77,10 +81,6 @@ function ensureServer(drive) {
         svc.onProgress(parseInt(m[1], 10), parseInt(m[2], 10));
       }
     });
-    const failAll = () => {
-      svc.dead = true;
-      while (readers.length) { const q = readers.shift(); if (q) q(null); }
-    };
     child.on('error', failAll);
     child.on('close', failAll);
     child.stdin.on('error', failAll); // EPIPE saat child mati antre tulis -> jangan crash main
@@ -89,9 +89,23 @@ function ensureServer(drive) {
   });
 }
 
+// Timeout watchdog per query: bila scanner tak menjawab dalam QUERY_TIMEOUT_MS
+// (mis. drive dicabut di tengah baca $MFT / geometri patologis), resolve null
+// dan bunuh server (readers di-drain) — cegah scan menggantung selamanya.
+// Timeout lebih longgar utk query full (limit=0) yang bisa menghasilkan respon
+// besar, agar watchdog tidak false-fire pada volume raksasa.
+const QUERY_TIMEOUT_MS = 30000;
+const QUERY_TIMEOUT_FULL_MS = 120000;
 function serverQuery(svc, line) {
   if (svc.dead || svc.child.killed || svc.child.exitCode != null) return Promise.resolve(null);
+  const isFull = !/\s\d+\s*$/.test(line); // tanpa limit -> full query
+  const timeoutMs = isFull ? QUERY_TIMEOUT_FULL_MS : QUERY_TIMEOUT_MS;
   return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      svc.dead = true;
+      try { svc.child.kill(); } catch {}
+      // failAll (close/error) akan mengalirkan semua reader -> resolve(null).
+    }, timeoutMs);
     svc.readers.push(resolve);
     svc.child.stdin.write(line + '\n');
   });
@@ -99,22 +113,26 @@ function serverQuery(svc, line) {
 
 // Coba layani scan via server MFT persisten. return null bila tak tersedia /
 // gagal / path bukan drive lokal -> pemanggil fallback ke Node walk.
-async function tryMftServe(root, onProgress) {
+// `limit` (>0) membatasi jumlah anak per level yang dikirim (slice cepat utk
+// tampilan awal); 0 = full tree.
+async function tryMftServe(root, onProgress, limit = 0) {
   const m = /^([A-Za-z]):([\\\/].*)?$/.exec(root || '');
   if (!m) return null;
   const drive = m[1].toUpperCase();
   const svc = await ensureServer(drive);
   if (!svc || svc.dead) return null;
+  const prevProgress = svc.onProgress;
   svc.onProgress = onProgress;
   try {
     const rest = m[2];
-    const req = rest && !/^[\\\/]+$/.test(rest) ? root.replace(/[\\\/]+$/, '') : '-'; // '-' = akar volume
+    let req = rest && !/^[\\\/]+$/.test(rest) ? root.replace(/[\\\/]+$/, '') : '-'; // '-' = akar volume
+    if (limit > 0) req += ' ' + limit;
     const raw = await serverQuery(svc, req);
     if (!raw) return null;
     const j = JSON.parse(raw);
     return (!j || j.error) ? null : j;
   } catch { return null; }
-  finally { svc.onProgress = null; }
+  finally { svc.onProgress = prevProgress; } // pulihkan cb sebelumnya (jangan null-kan punya scan lain)
 }
 
 async function nodeScan(root, onProgress, state, depth = 0) {
@@ -167,9 +185,19 @@ async function nodeScan(root, onProgress, state, depth = 0) {
 const treeCache = new Map(); // path -> tree penuh berakar di path tsb
 const TREE_CACHE_MAX = 4; // batas entri (LRU) — cegah memori tumbuh tanpa batas
 
-function makeSlice(node) {
+// Cap anak per slice: cegah payload IPC raksasa + array penuh di state renderer
+// untuk folder padat (mis. WinSxS ratusan ribu entri). Renderer tetap meng-`
+// folder via scan(path) sendiri; cap hanya membatasi jumlah anak langsung yang
+// dikirim sekaligus. Bila terpotong, tandai `truncated`.
+const SLICE_CHILD_CAP = 2000;
+function makeSlice(node, full = false) {
   const base = node.path || '';
-  const kids = (node.children || []).map((c) => ({
+  const allKids = node.children || [];
+  // Bila `full` (expand subfolder): jangan cap — kirim semua anak agar data
+  // tidak hilang senyap. Root scan (full=false): cap utk cegah payload raksasa.
+  const cap = full ? Infinity : SLICE_CHILD_CAP;
+  const truncated = allKids.length > cap;
+  const kids = allKids.slice(0, cap).map((c) => ({
     name: c.name,
     path: c.path || (base + (base && base.slice(-1) !== '\\' ? '\\' : '') + c.name),
     size: c.size || 0,
@@ -189,6 +217,7 @@ function makeSlice(node) {
     note: node.note,
     engine: node._engine || 'node',
     children: kids,
+    truncated: truncated || undefined,
   };
 }
 
@@ -244,25 +273,33 @@ function sliceFromCache(base) {
 let scanQueue = Promise.resolve();
 function enqueue(fn) { const r = scanQueue.then(fn); scanQueue = r.catch(() => {}); return r; }
 
-ipcMain.handle('scan', async (_evt, root) => {
+ipcMain.handle('scan', async (_evt, root, opts) => {
+  if (!trustedSender(_evt)) return { name: '', path: '', size: 0, alloc: 0, dir: true, children: [], error: 'untrusted' };
   const base = root || process.env.SYSTEMDRIVE || 'C:\\';
+  // `full` (dari expand subfolder) minta tree penuh (limit=0) — tidak di-cap,
+  // agar data >2000 anak tetap tampil. Root scan default: slice capped cepat.
+  const full = !!(opts && opts.full);
   // Validasi: hanya jalur drive lokal (cegah UNC/SSRF & path di luar drive).
   if (!/^[A-Za-z]:([\\\/]|$)/.test(base)) return { name: base, path: base, size: 0, alloc: 0, dir: true, children: [], error: 'invalid_root' };
-  const fromCache = sliceFromCache(base);
+  const fromCache = full ? null : sliceFromCache(base);
   if (fromCache) return fromCache;
 
   const runScan = async () => {
     let mft = null;
     let mftLast = 0;
     try {
+      // Root scan: slice CAPPED (max 2000 anak/level) utk tampilan awal cepat.
+      // Expand subfolder (`full`): minta tree penuh (limit=0) agar data tidak
+      // hilang senyap. Tree penuh selalu tersedia via server.
+      const limit = full ? 0 : 2000;
       mft = await tryMftServe(base, (count, total) => {
         const now = Date.now();
         if (now - mftLast < 120) return; // throttle: maks ~8 event/detik
         mftLast = now;
         if (!_evt.sender.isDestroyed()) _evt.sender.send('scan-progress', { count, total, dir: 'Reading $MFT…' });
-      });
+      }, limit);
     } catch { mft = null; }
-    if (mft) { mft._engine = 'mft'; return mft; }
+    if (mft) { mft._engine = 'mft'; if (!full) mft._capped = true; return mft; }
 
     // Fallback Node single-pass (indeterminate progress). Tanpa prescan
     // terpisah (P3) — jumlah item dilaporkan seiring jalan.
@@ -281,14 +318,22 @@ ipcMain.handle('scan', async (_evt, root) => {
     return fullTree;
   };
 
-  const full = await enqueue(runScan);
-  cacheSet(base, full);
+  const fullTree = await enqueue(runScan);
+  cacheSet(base, fullTree);
   filesCache.clear(); // rescan -> snapshot "All Files" lama basi, bangun ulang
-  return makeSlice(full);
+  return makeSlice(fullTree, full);
 });
 
+// Jendela utama — disimpan utk validasi sender IPC (hanya frame app sendiri).
+let win = null;
+// Hanya terima event dari webContents jendela utama (cegah konten asing yang
+// mewarisi bridge preload memanggil channel IPC).
+function trustedSender(evt) {
+  return !!(win && !win.isDestroyed() && evt && evt.sender === win.webContents);
+}
+
 function createWindow() {
-  const win = new BrowserWindow({
+  win = new BrowserWindow({
     width: 1280,
     height: 840,
     title: 'Wiztri',
@@ -301,12 +346,15 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'public', 'index.html'));
-  // Kunci navigasi: tolak window.open / navigasi ke URL non-file lokal (cegah
-  // renderer di-bawa ke halaman remote yang mewarisi bridge preload).
+  // Kunci navigasi: hanya izinkan halaman app sendiri (public/index.html), tolak
+  // window.open / navigasi ke file:// lain atau URL remote (cegah renderer
+  // dibawa ke halaman yang mewarisi bridge preload).
+  const appIndexUrl = require('url').pathToFileURL(path.join(__dirname, 'public', 'index.html')).href;
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e, url) => {
-    if (!url.startsWith('file://')) e.preventDefault();
+    if (url !== appIndexUrl) e.preventDefault();
   });
+  win.on('closed', () => { win = null; });
 }
 
 app.whenReady().then(() => {
@@ -326,7 +374,7 @@ function localDrives() {
   return out;
 }
 
-ipcMain.handle('list-drives', () => localDrives());
+ipcMain.handle('list-drives', (evt) => trustedSender(evt) ? localDrives() : []);
 
 // Deteksi mode Administrator: coba buka raw volume \\.\C: — persis yang
 // dilakukan scanner MFT. Berhasil -> admin (MFT bisa jalan); gagal -> bukan.
@@ -334,14 +382,18 @@ function isAdmin() {
   try { const fd = fs.openSync('\\\\.\\C:', 'r'); fs.closeSync(fd); return true; }
   catch { return false; }
 }
-ipcMain.handle('is-admin', () => isAdmin());
+ipcMain.handle('is-admin', (evt) => trustedSender(evt) && isAdmin());
 
 // Relaunch sebagai Administrator (UAC prompt), lalu tutup sesi non-admin.
-ipcMain.handle('relaunch-admin', () => {
+// Hindari interpolasi path ke string PowerShell (rapuh saat path berisi kutip);
+// pakai -EncodedCommand base64 UTF-16LE sehingga zero quoting.
+ipcMain.handle('relaunch-admin', (evt) => {
+  if (!trustedSender(evt)) return { ok: false };
   try {
-    const argClause = app.isPackaged ? "''" : ("'" + __dirname + "'");
-    const script = `Start-Process -FilePath "${process.execPath}" -ArgumentList ${argClause} -Verb RunAs`;
-    const c = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', script],
+    const args = app.isPackaged ? '' : __dirname;
+    const script = `Start-Process -FilePath '${process.execPath.replace(/'/g, "''")}' -ArgumentList '${args.replace(/'/g, "''")}' -Verb RunAs`;
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    const c = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
       { windowsHide: true, detached: true, stdio: 'ignore' });
     c.unref();
     // Sesi non-admin ditutup sebentar lagi; UAC prompt muncul di proses baru.
@@ -370,11 +422,13 @@ function flattenFiles(node, out, parent) {
 }
 
 // Ambil node tree penuh untuk path (root atau subtree dari leluhur yang sudah
-// dibangun). Basis untuk flatten.
-function fullNodeFor(base) {
+// dibangun). Basis untuk flatten. Bila cache belum punya tree penuh (scan
+// awal datang capped), query server full (limit=0) sekali utk subtree ini.
+async function fullNodeFor(base) {
   base = normDrive(base);
   const bb = base.toLowerCase();
   for (const [p, tree] of treeCache) {
+    if (tree && tree._capped) continue; // slice scan-awal tidak penuh -> jangan dipakai utk flatten
     const pb = p.toLowerCase();
     if (bb.startsWith(pb) && atBoundary(bb, pb.length)) {
       const rel = base.slice(p.length).split(/[\\\/]+/).filter(Boolean);
@@ -382,18 +436,26 @@ function fullNodeFor(base) {
       if (node) { if (rel.length) node.path = base; return node; }
     }
   }
+  // Tidak di cache (atau cache capped) -> query server penuh.
+  try {
+    const full = await tryMftServe(base, null, 0);
+    if (full) { cacheSet(base, full); return full; }
+  } catch {}
   return null;
 }
 
-function filesEntry(base) {
+async function filesEntry(base) {
   base = normDrive(base);
   let e = filesCache.get(base);
   if (e) { filesCache.delete(base); filesCache.set(base, e); return e; } // sentuh -> LRU
-  const node = fullNodeFor(base);
+  const node = await fullNodeFor(base);
   const files = [];
   if (node) flattenFiles(node, files, null);
-  files.sort((a, b) => b.size - a.size);
-  e = { total: files.length, files };
+  // Pre-sort SEKALI (size & alloc) saat cache dibangun, agar tiap panggilan
+  // paginasi tinggal slice tanpa re-sort O(n log n) per halaman.
+  const bySize = files.slice().sort((a, b) => b.size - a.size);
+  const byAlloc = files.slice().sort((a, b) => (b.alloc ?? b.size) - (a.alloc ?? a.size));
+  e = { total: files.length, bySize, byAlloc };
   filesCache.set(base, e);
   if (filesCache.size > FILES_CACHE_MAX) {
     const oldest = filesCache.keys().next().value;
@@ -402,32 +464,34 @@ function filesEntry(base) {
   return e;
 }
 
-ipcMain.handle('files-all', (_evt, root, offset, limit, q, metric) => {
+ipcMain.handle('files-all', async (evt, root, offset, limit, q, metric) => {
+  if (!trustedSender(evt)) return { total: 0, rows: [] };
   const base = (typeof root === 'string' && /^[A-Za-z]:([\\\/]|$)/.test(root)) ? root : '';
   if (!base) return { total: 0, rows: [] };
-  const e = filesEntry(base);
-  let all = e.files;
+  const e = await filesEntry(base);
   const byAlloc = metric === 'alloc';
-  if (q) {
-    const qq = q.trim().toLowerCase();
-    if (qq) {
-      const toks = qq.split(/\s+/).filter(Boolean);
+  let all = byAlloc ? e.byAlloc : e.bySize;
+  const qq = (typeof q === 'string' ? q : '').trim().toLowerCase();
+  if (qq) {
+    const toks = qq.split(/\s+/).filter(Boolean);
+    if (toks.length) {
       all = all.filter((f) => {
         const s = f.name.toLowerCase() + '\n' + f.path.toLowerCase();
         return toks.every((t) => s.includes(t));
       });
+      // re-sort hanya subset hasil filter (jauh lebih kecil dari total).
+      all = all.slice().sort((a, b) =>
+        byAlloc ? (b.alloc ?? b.size) - (a.alloc ?? a.size) : b.size - a.size);
     }
   }
-  const sortVal = (f) => byAlloc ? (f.alloc ?? f.size) : f.size;
-  all = [...all].sort((a, b) => sortVal(b) - sortVal(a));
   const start = Math.max(0, offset | 0);
   const lim = Math.min(1000, Math.max(1, (limit | 0) || 500));
   return { total: all.length, rows: all.slice(start, start + lim) };
 });
 
-ipcMain.handle('open-path', (_e, target) => {
+ipcMain.handle('open-path', (evt, target) => {
   try {
-    if (!target || typeof target !== 'string') return { ok: false };
+    if (!trustedSender(evt) || !target || typeof target !== 'string') return { ok: false };
     // Batasi ke drive lokal (cegah renderer membuka path sembarang / UNC).
     const ok = localDrives().some((d) => target.toUpperCase().startsWith(d.toUpperCase() + '\\') || target.toUpperCase() === d.toUpperCase());
     if (!ok) return { ok: false };
