@@ -32,24 +32,41 @@ function scannerExe() {
   return null;
 }
 function ensureServer(drive) {
-  if (server && server.drive === drive && !server.child.killed) return Promise.resolve(server);
+  if (server && server.drive === drive && !server.child.killed && !server.dead) return Promise.resolve(server);
   if (server) { try { server.child.kill(); } catch {} server = null; }
   const exe = scannerExe();
   if (!exe) return Promise.resolve(null);
   return new Promise((resolve) => {
     const child = spawn(exe, ['--serve', drive], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    let buf = Buffer.alloc(0);
     const readers = [];
     const svc = { drive, child, readers, onProgress: null, dead: false };
+    let pend = [];       // fragmen stdout belum terproses
+    let want = 0;        // byte body tersisa yang ditunggu (0 = sedang cari baris panjang)
     child.stdout.on('data', (d) => {
-      buf = Buffer.concat([buf, d]);
-      let nl;
-      while ((nl = buf.indexOf(0x0a)) >= 0) {
-        const len = Number(buf.slice(0, nl).toString('utf8'));
-        if (!Number.isFinite(len) || len < 0) { buf = buf.slice(nl + 1); continue; }
-        if (buf.length < nl + 1 + len) break;
-        const body = buf.slice(nl + 1, nl + 1 + len).toString('utf8');
-        buf = buf.slice(nl + 1 + len);
+      pend.push(d);
+      for (;;) {
+        if (want === 0) {
+          const all = pend.length === 1 ? pend[0] : Buffer.concat(pend);
+          pend.length = 0;
+          const nl = all.indexOf(0x0a);
+          if (nl < 0) { pend.push(all); break; } // baris panjang belum lengkap
+          const len = Number(all.slice(0, nl).toString('utf8'));
+          if (!Number.isFinite(len) || len < 0) break; // sampah -> buang
+          if (len > (1 << 30)) break; // bounding anti-OOM
+          const rest = all.subarray(nl + 1);
+          if (rest.length) pend.push(rest);
+          want = len;
+          if (want === 0) { const q = readers.shift(); if (q) q(''); continue; }
+          continue;
+        }
+        const have = pend.reduce((s, b) => s + b.length, 0);
+        if (have < want) break;
+        const body = Buffer.concat(pend, want).toString('utf8');
+        const extra = Buffer.concat(pend);
+        pend.length = 0;
+        const left = extra.subarray(want);
+        if (left.length) pend.push(left);
+        want = 0;
         const q = readers.shift();
         if (q) q(body);
       }
@@ -191,6 +208,11 @@ function descend(tree, parts) {
 // Batas komponen path: "C:\Users" harus TIDAK cocok dgn "C:\UsersData".
 function atBoundary(s, i) { return i >= s.length || s[i] === '\\' || s[i] === '/'; }
 
+// Normalisasi akar drive: "C:" -> "C:\". Cache key & node.path bisa beda
+// (CacheFT root emit "C:" sedangkan renderer default "C:\"), jadi samakan di
+// lookup agar All Files & slice cache cocok.
+function normDrive(p) { return typeof p === 'string' && /^[A-Za-z]:$/.test(p) ? p + '\\' : p; }
+
 function cacheSet(p, tree) {
   treeCache.set(p, tree);
   // LRU: pindahkan ke akhir; buang entri tertua bila melebihi batas.
@@ -202,6 +224,7 @@ function cacheSet(p, tree) {
 
 // Coba layani slice dari cache — path sama atau subtree dari leluhur yang sudah dibangun.
 function sliceFromCache(base) {
+  base = normDrive(base);
   const bb = base.toLowerCase();
   for (const [p, tree] of treeCache) {
     if (!p || typeof p !== 'string') continue;
@@ -210,7 +233,7 @@ function sliceFromCache(base) {
     if (bb.startsWith(pb) && atBoundary(bb, pb.length)) {
       const rel = base.slice(p.length).split(/[\\\/]+/).filter(Boolean);
       const node = descend(tree, rel);
-      if (node) { cacheSet(base, node); return makeSlice(node); }
+      if (node) { node.path = base; cacheSet(base, node); return makeSlice(node); }
     }
   }
   return null;
@@ -230,9 +253,13 @@ ipcMain.handle('scan', async (_evt, root) => {
 
   const runScan = async () => {
     let mft = null;
+    let mftLast = 0;
     try {
       mft = await tryMftServe(base, (count, total) => {
-        _evt.sender.send('scan-progress', { count, total, dir: 'Reading $MFT…' });
+        const now = Date.now();
+        if (now - mftLast < 120) return; // throttle: maks ~8 event/detik
+        mftLast = now;
+        if (!_evt.sender.isDestroyed()) _evt.sender.send('scan-progress', { count, total, dir: 'Reading $MFT…' });
       });
     } catch { mft = null; }
     if (mft) { mft._engine = 'mft'; return mft; }
@@ -245,11 +272,11 @@ ipcMain.handle('scan', async (_evt, root) => {
       const now = Date.now();
       if (now - lastSend < 120) return; // throttle: maks ~8 event/detik
       lastSend = now;
-      _evt.sender.send('scan-progress', { count, total: 0, dir });
+      if (!_evt.sender.isDestroyed()) _evt.sender.send('scan-progress', { count, total: 0, dir });
     };
     c(0, base);
     const fullTree = await nodeScan(base, c, state);
-    _evt.sender.send('scan-progress', { count: state.count, total: 0, dir: '' });
+    if (!_evt.sender.isDestroyed()) _evt.sender.send('scan-progress', { count: state.count, total: 0, dir: '' });
     fullTree._engine = 'node';
     return fullTree;
   };
@@ -345,19 +372,21 @@ function flattenFiles(node, out, parent) {
 // Ambil node tree penuh untuk path (root atau subtree dari leluhur yang sudah
 // dibangun). Basis untuk flatten.
 function fullNodeFor(base) {
+  base = normDrive(base);
   const bb = base.toLowerCase();
   for (const [p, tree] of treeCache) {
     const pb = p.toLowerCase();
     if (bb.startsWith(pb) && atBoundary(bb, pb.length)) {
       const rel = base.slice(p.length).split(/[\\\/]+/).filter(Boolean);
       const node = rel.length ? descend(tree, rel) : tree;
-      if (node) return node;
+      if (node) { if (rel.length) node.path = base; return node; }
     }
   }
   return null;
 }
 
 function filesEntry(base) {
+  base = normDrive(base);
   let e = filesCache.get(base);
   if (e) { filesCache.delete(base); filesCache.set(base, e); return e; } // sentuh -> LRU
   const node = fullNodeFor(base);
@@ -373,11 +402,12 @@ function filesEntry(base) {
   return e;
 }
 
-ipcMain.handle('files-all', (_evt, root, offset, limit, q) => {
+ipcMain.handle('files-all', (_evt, root, offset, limit, q, metric) => {
   const base = (typeof root === 'string' && /^[A-Za-z]:([\\\/]|$)/.test(root)) ? root : '';
   if (!base) return { total: 0, rows: [] };
   const e = filesEntry(base);
   let all = e.files;
+  const byAlloc = metric === 'alloc';
   if (q) {
     const qq = q.trim().toLowerCase();
     if (qq) {
@@ -388,6 +418,8 @@ ipcMain.handle('files-all', (_evt, root, offset, limit, q) => {
       });
     }
   }
+  const sortVal = (f) => byAlloc ? (f.alloc ?? f.size) : f.size;
+  all = [...all].sort((a, b) => sortVal(b) - sortVal(a));
   const start = Math.max(0, offset | 0);
   const lim = Math.min(1000, Math.max(1, (limit | 0) || 500));
   return { total: all.length, rows: all.slice(start, start + lim) };

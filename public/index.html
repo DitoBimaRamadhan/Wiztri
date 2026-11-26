@@ -168,6 +168,19 @@
   @keyframes float { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-7px); } }
   .empty h1 { font-weight:650; }
   .foot { padding:6px 14px; }
+  .th-sort { cursor:pointer; user-select:none; }
+  .th-sort:hover { color:var(--text); }
+  .th-sort.on { color:var(--teal); }
+  .up { position:absolute; top:8px; right:8px; z-index:5; width:26px; height:26px; border-radius:6px;
+    border:1px solid var(--line); background:var(--surface2); color:var(--text); font-size:15px;
+    cursor:pointer; line-height:1; }
+  .up:hover { border-color:var(--teal); color:var(--teal); }
+  #tm { position:relative; }
+  .ctx { position:fixed; z-index:200; min-width:150px; background:var(--surface); border:1px solid var(--line);
+    border-radius:8px; padding:4px; box-shadow:0 10px 30px rgba(0,0,0,.5); display:flex; flex-direction:column; }
+  .ctx button { background:transparent; border:0; color:var(--text); text-align:left; padding:7px 12px;
+    border-radius:6px; font-size:13px; cursor:pointer; }
+  .ctx button:hover { background:var(--surface2); color:var(--teal); }
   @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
   @media (max-width:900px) {
     .cols { flex-direction:column; }
@@ -288,7 +301,7 @@
     };
   };
 
-  function Row({ node, depth, total, expanded, selected, metric, onToggle, onSelect, onShowAll, basePath }) {
+  function Row({ node, depth, total, expanded, selected, metric, onToggle, onSelect, onShowAll, basePath, onCtx }) {
     const isDir = node.dir === true;
     const val = metric === 'alloc' ? (node.alloc ?? node.size) : node.size;
     const pct = total > 0 ? (val / total) * 100 : 0;
@@ -302,6 +315,7 @@
             role="row"
             aria-selected="${selected === node}"
             onClick="${() => onSelect(node)}"
+            onContextMenu="${(e) => { e.preventDefault(); e.stopPropagation(); if (onCtx) onCtx(e, node); }}"
             onKeyDown="${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(node); } }}">
           <td>
             <span className="spacer" style="${{ width: depth * 18 }}"/>
@@ -357,6 +371,26 @@
     const allToken = useRef(0); // naik tiap load - -> buang respon basi
     const scanToken = useRef(0); // naik tiap scan baru -> buang hasil basi
     const [, bump] = useReducer((x) => x + 1, 0); // paksa re-render setelah muat anak malas
+    const [sortKey, setSortKey] = useState('size'); // 'size' | 'alloc' | 'name'
+    const [sortAsc, setSortAsc] = useState(false); // default size menurun (ala WizTree)
+    const [drill, setDrill] = useState(null); // folder akar treemap (null = root scanned)
+    const [ctx, setCtx] = useState(null); // context menu {x,y,node}
+
+    const toggleSort = (k) => {
+      if (sortKey === k) setSortAsc((a) => !a);
+      else { setSortKey(k); setSortAsc(false); }
+    };
+    const valOf = (n, m) => m === 'alloc' ? (n.alloc ?? n.size) : n.size;
+    const sortList = (list, m) => {
+      const arr = [...list];
+      const v = (n) => (sortKey === 'name' ? n.name : valOf(n, m));
+      arr.sort((a, b) => {
+        const x = v(a), y = v(b);
+        if (sortKey === 'name') return sortAsc ? String(x).localeCompare(String(y)) : String(y).localeCompare(String(x));
+        return sortAsc ? x - y : y - x;
+      });
+      return arr;
+    };
 
     useEffect(() => {
       if (!W) return;
@@ -370,6 +404,15 @@
     useEffect(() => {
       if (W && W.isAdmin) W.isAdmin().then(setIsAdmin).catch(() => {});
     }, []);
+
+    useEffect(() => {
+      if (!ctx) return;
+      const close = () => setCtx(null);
+      window.addEventListener('click', close);
+      window.addEventListener('contextmenu', close);
+      window.addEventListener('keydown', close);
+      return () => { window.removeEventListener('click', close); window.removeEventListener('contextmenu', close); window.removeEventListener('keydown', close); };
+    }, [ctx]);
 
     const logicalTotal = tree ? (tree.size || 0) : 0;
     const allocTotal = tree ? (tree.alloc || 0) : 0;
@@ -413,13 +456,13 @@
       const off = reset ? 0 : allOffsetRef.current;
       setAllLoading(true);
       try {
-        const r = await W.filesAll(allBase, off, 500, filter);
+        const r = await W.filesAll(allBase, off, 500, filter, metric);
         if (tok !== allToken.current) return; // basi (load lain sudah jalan)
         setAllTotal(r.total);
         setAllRows(reset ? r.rows : (p) => [...p, ...r.rows]);
         allOffsetRef.current = off + r.rows.length;
       } catch {} finally { if (tok === allToken.current) setAllLoading(false); }
-    }, [W, allBase, filter]);
+    }, [W, allBase, filter, metric]);
 
     useEffect(() => {
       if (view === 'all') { allOffsetRef.current = 0; loadAll(true); }
@@ -454,10 +497,16 @@
         </table>
       </div>` : (view === 'types' ? html`
       <table>
-        <thead><tr><th>Type</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
+        <thead><tr>
+          <th className="${sortKey==='name' ? 'th-sort on' : 'th-sort'}" tabIndex="0" role="button" onClick="${() => toggleSort('name')}" onKeyDown="${(e)=>{ if(e.key==='Enter'||e.key===' ') toggleSort('name'); }}">Type ${sortKey==='name' ? (sortAsc ? '▲' : '▼') : ''}</th>
+          <th className="${(sortKey==='size'||sortKey==='alloc') ? 'th-sort on' : 'th-sort'}" tabIndex="0" role="button" onClick="${() => toggleSort(metric)}" onKeyDown="${(e)=>{ if(e.key==='Enter'||e.key===' ') toggleSort(metric); }}">${metric === 'alloc' ? 'Allocated' : 'Size'} ${(sortKey==='size'||sortKey==='alloc') ? (sortAsc ? '▲' : '▼') : ''}</th>
+          <th>%</th><th></th>
+        </tr></thead>
         <tbody>
           ${(() => {
-            const rows = fileTypes.filter((g) => !match || match(g.name)).slice(0, MAX_ROWS);
+            let rows = fileTypes.filter((g) => !match || match(g.name));
+            rows = sortList(rows, metric).slice(0, MAX_ROWS);
+            const denom = total || 1;
             return rows.map((g, i) => html`
               <tr key="${i}" tabIndex="0" role="row">
                 <td>
@@ -467,24 +516,30 @@
                   <span className="dim-count"> (${g.count})</span>
                 </td>
                 <td className="num">${fmt(metric === 'alloc' ? g.alloc : g.size)}</td>
-                <td className="pct">${((metric === 'alloc' ? g.alloc : g.size) / total * 100).toFixed(1) + '%'}</td>
-                <td><span className="sizebar" style="${{ width: Math.min(120, ((metric === 'alloc' ? g.alloc : g.size) / (total || 1)) * 100 * 1.2) }}"/></td>
+                <td className="pct">${((metric === 'alloc' ? g.alloc : g.size) / denom * 100).toFixed(1) + '%'}</td>
+                <td><span className="sizebar" style="${{ width: Math.min(120, ((metric === 'alloc' ? g.alloc : g.size) / denom) * 100 * 1.2) }}"/></td>
               </tr>`);
           })()}
         </tbody>
       </table>` : html`
       <table>
-        <thead><tr><th>Name</th><th>${metric === 'alloc' ? 'Allocated' : 'Size'}</th><th>%</th><th></th></tr></thead>
+        <thead><tr>
+          <th className="${sortKey==='name' ? 'th-sort on' : 'th-sort'}" tabIndex="0" role="button" onClick="${() => toggleSort('name')}" onKeyDown="${(e)=>{ if(e.key==='Enter'||e.key===' ') toggleSort('name'); }}">Name ${sortKey==='name' ? (sortAsc ? '▲' : '▼') : ''}</th>
+          <th className="${(sortKey==='size'||sortKey==='alloc') ? 'th-sort on' : 'th-sort'}" tabIndex="0" role="button" onClick="${() => toggleSort(metric)}" onKeyDown="${(e)=>{ if(e.key==='Enter'||e.key===' ') toggleSort(metric); }}">${metric === 'alloc' ? 'Allocated' : 'Size'} ${(sortKey==='size'||sortKey==='alloc') ? (sortAsc ? '▲' : '▼') : ''}</th>
+          <th>%</th><th></th>
+        </tr></thead>
         <tbody>
           ${(() => {
-            const kids = (tree && tree.children) || [];
+            let kids = (tree && tree.children) || [];
             if (match) kids = kids.filter((c) => match(c.name));
+            kids = sortList(kids, metric);
             const shown = kids.length > MAX_ROWS && !showRootMore ? kids.slice(0, MAX_ROWS) : kids;
             return shown.map((c, i) => html`
               <${Row} key="${i}" node="${c}" depth="${0}" total="${total}"
                      expanded="${expanded}" selected="${selected}" metric="${metric}"
                      onToggle="${toggle}" onSelect="${select}"
-                     onShowAll="${showAll}" basePath="${tree.path}"/>`);
+                     onShowAll="${showAll}" basePath="${tree.path}"
+                     onCtx="${(e, n) => { setCtx({ x: e.clientX, y: e.clientY, node: n }); }}"/>`);
           })()}
           ${tree && tree.children && tree.children.length > MAX_ROWS && !showRootMore ? html`
             <tr className="more" tabIndex="0" role="button" onClick="${() => setShowRootMore(true)}" onKeyDown="${(e) => { if (e.key==='Enter'||e.key===' ') setShowRootMore(true); }}">
@@ -496,7 +551,8 @@
     async function run(p) {
       const tok = ++scanToken.current;
       setBusy(true); setProg(null); setSelected(null); setExpanded(new Set()); setErr(null); setNote(null);
-      setShowRootMore(false);
+      setShowRootMore(false); setDrill(null);
+      setAllRows([]); setAllTotal(0); allOffsetRef.current = 0; // buang snapshot All Files basi
       try {
         const t = W
           ? await W.scan(p)
@@ -524,11 +580,11 @@
         const s = W
           ? await W.scan(n.path)
           : await fetch('/api/scan?root=' + encodeURIComponent(n.path)).then(r => r.ok ? r.json() : Promise.reject(new Error('scan failed')));
-        if (tok !== scanToken.current) return; // scan baru dimulai -> buang
+        if (tok !== scanToken.current) { n._loading = false; return; } // scan baru dimulai -> buang, tidak nyangkut
         n.children = s.children || [];
         n.error = s.error || undefined;
       } catch (e) {
-        if (tok !== scanToken.current) return;
+        if (tok !== scanToken.current) { n._loading = false; return; }
         n.children = [];
         n.error = String(e);
       }
@@ -542,15 +598,15 @@
     }
     async function select(n) {
       if (n._agg) return;
-      if (n.dir) { await ensureChildren(n); bump(); }
+      if (n.dir) { await ensureChildren(n); bump(); setDrill(n); }
       setSelected(n);
       // Jangan auto-expand folder raksasa (bisa monolitik commit ribuan baris).
       if (n.dir && (n.children || []).length <= MAX_ROWS) setExpanded(prev => new Set(prev).add(n));
     }
 
     const tmNode = useMemo(() => {
-      return (tree && selected && Array.isArray(selected.children)) ? selected : tree;
-    }, [tree, selected]);
+      return (drill && Array.isArray(drill.children)) ? drill : tree;
+    }, [tree, drill]);
 
     const cap200 = (list) => {
       list.sort((a, b) => b.v - a.v);
@@ -644,16 +700,21 @@
             <div className="panel right">
               ${tmItems.length ? html`
                 <div id="tm" key="${metric}">
+                  ${drill ? html`<button className="up" onClick="${() => setDrill(null)}" title="Up to root">↑</button>` : null}
                   ${tiles.map((t, i) => {
                     const item = tmItems[i];
-                    const col = tileColor(i, !!item.node._agg);
+                    const isAgg = !!item.node._agg;
+                    const col = isAgg ? MUTED : (item.node.dir === true ? tileColor(i, false) : extColor(item.node.name));
+                    const tiny = (t.w * t.h) < 0.004; // label disembunyikan utk tile terlalu kecil
+                    const onCtx = (e) => { e.preventDefault(); e.stopPropagation(); setCtx({ x: e.clientX, y: e.clientY, node: item.node }); };
                     return html`
                       <div key="${i}" className="${'tile' + (tileDark(col) ? '' : ' dk')}"
                            style="${{ left:(t.x*100)+'%', top:(t.y*100)+'%', width:(t.w*100)+'%', height:(t.h*100)+'%', background:col, ['--i']: i }}"
                            title="${item.node.name + ' — ' + fmt(item.v)}"
                            onClick="${() => select(item.node)}"
+                           onContextMenu="${onCtx}"
                            tabIndex="0" role="button" onKeyDown="${(e) => { if (e.key==='Enter'||e.key===' ') select(item.node); }}">
-                        <span className="t">${item.node.name}</span>
+                        ${tiny ? null : html`<span className="t">${item.node.name}</span>`}
                       </div>`;
                   })}
                 </div>` : html`<div className="quiet" role="status" aria-live="polite">${selected ? 'Empty folder' : 'No data yet'}</div>`}
@@ -663,6 +724,11 @@
         <div className="foot">
           <span>${err ? '⚠ ' + err : (note ? '⚠ ' + note : (tree ? (tree.path || tree.name) : ''))}</span>
         </div>
+        ${ctx ? html`
+          <div className="ctx" style="${{ left: ctx.x, top: ctx.y }}" role="menu">
+            <button role="menuitem" onClick="${() => { if (W && W.openPath) W.openPath(ctx.node.path || ''); setCtx(null); }}">Open in Explorer</button>
+            <button role="menuitem" onClick="${() => { if (navigator.clipboard) navigator.clipboard.writeText(ctx.node.path || ''); setCtx(null); }}">Copy path</button>
+          </div>` : null}
       </div>`;
   }
 
