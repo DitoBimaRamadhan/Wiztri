@@ -66,6 +66,7 @@ function ensureServer(drive) {
     };
     child.on('error', failAll);
     child.on('close', failAll);
+    child.stdin.on('error', failAll); // EPIPE saat child mati antre tulis -> jangan crash main
     server = svc;
     resolve(svc);
   });
@@ -255,6 +256,7 @@ ipcMain.handle('scan', async (_evt, root) => {
 
   const full = await enqueue(runScan);
   cacheSet(base, full);
+  filesCache.clear(); // rescan -> snapshot "All Files" lama basi, bangun ulang
   return makeSlice(full);
 });
 
@@ -272,6 +274,12 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'public', 'index.html'));
+  // Kunci navigasi: tolak window.open / navigasi ke URL non-file lokal (cegah
+  // renderer di-bawa ke halaman remote yang mewarisi bridge preload).
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('file://')) e.preventDefault();
+  });
 }
 
 app.whenReady().then(() => {
@@ -328,7 +336,7 @@ function flattenFiles(node, out, parent) {
   const kids = node.children || [];
   for (let i = 0; i < kids.length; i++) {
     const c = kids[i];
-    const cp = p ? p + '\\' + c.name : c.name;
+    const cp = (p ? (p.slice(-1) === '\\' ? p : p + '\\') : '') + c.name;
     if (Array.isArray(c.children)) flattenFiles(c, out, cp);
     else out.push({ name: c.name, path: cp, size: c.size || 0, alloc: c.alloc ?? c.size ?? 0 });
   }

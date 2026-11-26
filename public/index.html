@@ -354,6 +354,7 @@
     const [allTotal, setAllTotal] = useState(0);
     const [allLoading, setAllLoading] = useState(false);
     const allOffsetRef = useRef(0);
+    const allToken = useRef(0); // naik tiap load - -> buang respon basi
     const scanToken = useRef(0); // naik tiap scan baru -> buang hasil basi
     const [, bump] = useReducer((x) => x + 1, 0); // paksa re-render setelah muat anak malas
 
@@ -408,23 +409,25 @@
     const allBase = (tree && tree.path) || root;
     const loadAll = useCallback(async (reset) => {
       if (!W || !W.filesAll || !allBase) return;
+      const tok = ++allToken.current;
       const off = reset ? 0 : allOffsetRef.current;
       setAllLoading(true);
       try {
         const r = await W.filesAll(allBase, off, 500, filter);
+        if (tok !== allToken.current) return; // basi (load lain sudah jalan)
         setAllTotal(r.total);
         setAllRows(reset ? r.rows : (p) => [...p, ...r.rows]);
         allOffsetRef.current = off + r.rows.length;
-      } catch {} finally { setAllLoading(false); }
+      } catch {} finally { if (tok === allToken.current) setAllLoading(false); }
     }, [W, allBase, filter]);
 
     useEffect(() => {
-      if (view === 'all') loadAll(true);
+      if (view === 'all') { allOffsetRef.current = 0; loadAll(true); }
     }, [view, allBase]);
 
     useEffect(() => {
       if (view !== 'all' || !W || !W.filesAll) return;
-      const id = setTimeout(() => loadAll(true), 250);
+      const id = setTimeout(() => { allOffsetRef.current = 0; loadAll(true); }, 250);
       return () => clearTimeout(id);
     }, [filter]);
 
@@ -514,7 +517,7 @@
 
     // Muat anak folder secara malas (lazy) lewat scan(path) — hanya saat dibuka.
     async function ensureChildren(n) {
-      if (!n || n.dir !== true || n._loaded) return;
+      if (!n || n.dir !== true || n._loaded || n._loading) return;
       const tok = scanToken.current;
       n._loading = true;
       try {
@@ -584,7 +587,7 @@
       <div style="${{ display:'flex', flexDirection:'column', height:'100%' }}">
         ${!isAdmin ? html`
           <div className="admin-banner" role="status">
-            <span>⚠ Mode non-admin — kecepatan penuh butuh MFT; folder terproteksi (System Volume Information, $Recycle.Bin, dll.) tidak tampil.</span>
+            <span>⚠ Non-admin mode — full speed needs MFT; protected folders (System Volume Information, $Recycle.Bin, etc.) are not shown.</span>
             ${W && W.relaunchAdmin ? html`<button className="tw-admin" onClick="${() => W.relaunchAdmin()}">Restart as Administrator</button>` : null}
           </div>` : null}
         <div className="stripe">
