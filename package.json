@@ -10,7 +10,7 @@
     "start": "node server.js",
     "desktop": "electron .",
     "dist": "electron-builder --win",
-    "test": "node test/smoke.js && node test/electron-smoke.js && node test/electron-cdp.js && node test/electron-scan.js"
+    "test": "node test/smoke.js && node test/electron-smoke.js && node test/electron-cdp.js && node test/electron-scan.js && node test/ui-logic.spec.mjs && node test/serve.spec.mjs"
   },
   "devDependencies": {
     "electron": "^33.4.11",
