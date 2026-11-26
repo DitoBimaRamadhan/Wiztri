@@ -1,6 +1,6 @@
 {
   "name": "wiztri",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "private": true,
   "description": "Wiztri — disk usage analyzer desktop app (Electron)",
   "author": "Dito Bima Ramadhan",

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.2 — 2026-11-26
+### Parity WizTree
+- **Kolom sortable** — klik header **Name / Size / Allocated** utk mengurutkan (default size menurun, ala WizTree).
+- **Treemap warna per ekstensi** — file diwarnai berdasarkan tipe (hash ekstensi), folder memakai palet; label disembunyikan di tile yang terlalu kecil.
+- **Drill treemap** — klik folder meng-akar ulang treemap ke folder tsb (tombol ↑ kembali ke akar); klik file tidak lagi melompat ke root.
+- **Menu konteks** (klik kanan di baris/tile): *Open in Explorer*, *Copy path*.
+### Perbaikan
+- **All Files kosong di root MFT** — cache key (`C:\`) vs node.path (`C:`) tidak sinkron → normalisasi `normDrive`; `files-all` kini terisi penuh untuk volume.
+- **Subfolder cache-hit kehilangan `path`** — slice dari cache kini menetapkan path node, sehingga All Files & openPath benar untuk subtree.
+- **Server MFT bisa permanen mati** — `ensureServer` kini men-spawn ulang bila child mati (dead), bukan diam-diam jatuh ke fallback.
+- **Framer stdout O(n²)** — akumulasi fragmen (fix mikro saat tree besar) + bounding panjang respon anti-OOM.
+- **Progres MFT dithrottle** (120ms) + guard `sender.isDestroyed()` (cegah throw saat window tertutup di tengah scan).
+- **`files-all` urut sesuai metrik** — mode Allocated kini urut berdasarkan ukuran teralokasi, bukan logis.
+- **All Files di-reset** saat rescan; `ensureChildren` tidak lagi nyangkut `_loading` bila ada scan baru.
+
 ## 0.3.1 — 2026-11-26
 ### Perbaikan
 - **Installer**: `wiztri setup.exe` sebelumnya hanya pointer Git-LFS 133 B (belum bersih, tak bisa diinstal) — dibangun ulang jadi NSIS asli ±82 MB.
