@@ -1,6 +1,6 @@
 # Wiztri
 
-Disk usage analyzer untuk Windows, gaya WizTree/TreeSize. Membaca `$MFT` (NTFS) secara mentah untuk scan cepat, dengan fallback walk sistem file biasa.
+Disk usage analyzer untuk Windows. Membaca `$MFT` (NTFS) secara mentah untuk scan cepat, dengan fallback walk sistem file biasa.
 
 ![Wiztri](Wiztri.jpeg)
 
