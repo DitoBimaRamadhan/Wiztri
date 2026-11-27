@@ -345,11 +345,16 @@ function trustedSender(evt) {
   return !!(win && !win.isDestroyed() && evt && evt.sender === win.webContents);
 }
 
+// Ikon aplikasi (title bar + taskbar Windows): ikon wizard yang disegar
+// (gen_icon.ps1), bukan banner 2752x1536 dipaksa persegi.
+// Ikon dibundel di public/ (ikut `files: public/**/*`), jadi tersedia saat runtime.
+const appIcon = path.join(__dirname, 'public', 'icon.ico');
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
     height: 840,
     title: 'Wiztri',
+    icon: appIcon,
     backgroundColor: '#0f1115',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
