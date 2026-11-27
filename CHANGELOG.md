@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.5 — 2026-11-27
+### UI/UX Redesain (Neon Compact & Profesional)
+- **Palet Neon** — `#05080F` (bg), aksen `--accent-teal` (#00F5FF) & `--accent-electric` (#7000FF).
+- **Kepadatan Informasi** — Padding tabel/tombol diperketat ala WizTree.
+- **Animasi Hover** — Glow neon (`box-shadow`) pada tabel/tile.
+- **Kartografi disk** — Kisi samar pada treemap (visual peta).
+- **Lisensi** — Tambahan footer copyright.
+### Perbaikan Audit
+- **Fix minor** — Keterbacaan tile gelap (text shadow), perbaikan `className` spinner, validasi reduced-motion.
+
 ## 0.3.4 — 2026-11-27
 Perbaikan audit ronde 2 (5 agent paralel).
 ### Rust scanner

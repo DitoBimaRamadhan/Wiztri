@@ -3,6 +3,7 @@ node_modules/
 installer/
 installer2/
 installer3/
+installer4/
 rust-scanner/target/
 rust-scanner/.cargo/
 
