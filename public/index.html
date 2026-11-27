@@ -173,7 +173,8 @@
   .sizebar { height:3px; border-radius:2px; background:linear-gradient(90deg, var(--accent-teal), var(--accent-blue)); transition:width .3s ease; margin-left:8px; vertical-align:middle; }
   .tile { border-radius:var(--r-sm); animation:tileIn .4s cubic-bezier(.2,.7,.3,1) backwards; animation-delay:calc(min(var(--i,0), 10) * 18ms); transition:filter .12s, transform .14s cubic-bezier(.2,.7,.3,1), box-shadow .15s; border:1px solid rgba(0,0,0,.2); }
   .tile:hover { filter:brightness(1.15); transform:scale(1.02); box-shadow:0 0 12px var(--accent-teal); z-index:3; }
-  .tile .t { position:absolute; left:4px; bottom:4px; right:4px; font-size:10px; line-height:1.2; color:#070B14; font-weight:600; pointer-events:none; word-break:break-all; background:rgba(255,255,255,0.85); padding:1px 3px; border-radius:2px; }
+  /* Label tile: bg transparan + text-shadow agar readable di atas warna neon */
+  .tile .t { position:absolute; left:4px; bottom:4px; right:4px; font-size:10px; line-height:1.2; color:#fff; font-weight:600; pointer-events:none; word-break:break-all; text-shadow:0 1px 2px rgba(0,0,0,0.8); }
   @keyframes tileIn { from { opacity:0; transform:scale(.88); } to { opacity:1; transform:scale(1); } }
   .empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; text-align:center; padding:0 32px; color:var(--dim); }
   .empty .glyph { font-size:40px; line-height:1; margin-bottom:12px; opacity:.8; }
@@ -201,7 +202,7 @@
   .ctx button { background:transparent; border:0; color:var(--text); text-align:left; padding:6px 10px;
     border-radius:var(--r-sm); font-size:var(--fs-label); cursor:pointer; }
   .ctx button:hover { background:var(--surface2); color:var(--accent-teal); }
-  @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+  @media (prefers-reduced-motion: reduce) { * { transition:none !important; animation:none !important; } }
   @media (max-width:900px) {
     .cols { flex-direction:column; }
     .left { flex:1 1 55%; border-right:0; border-bottom:1px solid var(--line); }
@@ -621,7 +622,7 @@
         if (tok !== scanToken.current) { n._loading = false; return; } // scan baru dimulai -> buang, tidak nyangkut
         n.children = s.children || [];
         n.error = s.error || undefined;
-        n._truncated = !!s.truncated || !!s.note;
+        n._truncated = !!s.truncated;
       } catch (e) {
         if (tok !== scanToken.current) { n._loading = false; return; }
         n.children = [];
@@ -699,7 +700,7 @@
                    aria-label="Folder path or drive"
                    onChange="${e => setRoot(e.target.value)}"
                    onKeyDown="${e => { if (e.key === 'Enter') run(root); }}"/>
-            <button className="btn" disabled="${busy}" onClick="${() => run(root)}">${busy ? html`<span class="spin"></span> Scanning…` : 'Scan'}</button>
+            <button className="btn" disabled="${busy}" onClick="${() => run(root)}">${busy ? html`<span className="spin"></span> Scanning…` : 'Scan'}</button>
             <div className="metric" role="group" aria-label="Metric">
               <button className="${metric === 'size' ? 'on' : ''}" onClick="${() => setMetric('size')}">Size</button>
               <button className="${metric === 'alloc' ? 'on' : ''}" onClick="${() => setMetric('alloc')}">Allocated</button>
@@ -717,7 +718,7 @@
               <div className="stat"><div className="v amber">${fmt(logicalTotal)}</div><div className="l">Logical Size</div></div>
               <div className="stat"><div className="v teal">${fmt(allocTotal)}</div><div className="l">Allocated</div></div>
               <div className="stat"><div className="v">${items.toLocaleString()}</div><div className="l">Items</div></div>
-              <div className="engine" role="status" aria-label="Scan engine">${engine === 'mft' ? 'MFT' : 'Fallback'}</div>
+              <div className="engine" role="status" aria-label="Scan engine">${engine === 'mft' ? 'MFT' : 'Node'}</div>
               ${prog ? html`
                 <span className="${'live' + (busy ? ' scan' : '')}">
                   ${prog.total > 0 ? html`
