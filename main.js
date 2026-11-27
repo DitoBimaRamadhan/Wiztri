@@ -96,9 +96,8 @@ function ensureServer(drive) {
 // besar, agar watchdog tidak false-fire pada volume raksasa.
 const QUERY_TIMEOUT_MS = 30000;
 const QUERY_TIMEOUT_FULL_MS = 120000;
-function serverQuery(svc, line) {
+function serverQuery(svc, line, isFull = false) {
   if (svc.dead || svc.child.killed || svc.child.exitCode != null) return Promise.resolve(null);
-  const isFull = !/\s\d+\s*$/.test(line); // tanpa limit -> full query
   const timeoutMs = isFull ? QUERY_TIMEOUT_FULL_MS : QUERY_TIMEOUT_MS;
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
@@ -106,7 +105,10 @@ function serverQuery(svc, line) {
       try { svc.child.kill(); } catch {}
       // failAll (close/error) akan mengalirkan semua reader -> resolve(null).
     }, timeoutMs);
-    svc.readers.push(resolve);
+    // Wrapper: clear timer saat resolve (cegah timeout palsu membunuh server
+    // setelah query sukses — timer harus di-clear, bukan dibiarkan menembak).
+    const done = (v) => { clearTimeout(timer); resolve(v); };
+    svc.readers.push(done);
     svc.child.stdin.write(line + '\n');
   });
 }
@@ -126,8 +128,10 @@ async function tryMftServe(root, onProgress, limit = 0) {
   try {
     const rest = m[2];
     let req = rest && !/^[\\\/]+$/.test(rest) ? root.replace(/[\\\/]+$/, '') : '-'; // '-' = akar volume
-    if (limit > 0) req += ' ' + limit;
-    const raw = await serverQuery(svc, req);
+    // Delimiter TAB (dilarang di nama NTFS): path ber-spasi/berakhiran angka
+    // tidak ambigu. Limit selalu dikirim eksplisit.
+    const line = req + '\t' + limit;
+    const raw = await serverQuery(svc, line, limit === 0);
     if (!raw) return null;
     const j = JSON.parse(raw);
     return (!j || j.error) ? null : j;
@@ -262,7 +266,15 @@ function sliceFromCache(base) {
     if (bb.startsWith(pb) && atBoundary(bb, pb.length)) {
       const rel = base.slice(p.length).split(/[\\\/]+/).filter(Boolean);
       const node = descend(tree, rel);
-      if (node) { node.path = base; cacheSet(base, node); return makeSlice(node); }
+      if (node) {
+        node.path = base;
+        // Propagasikan penanda capped dr leluhur: subtree dari tree MFT capped
+        // TIDAK lengkap; fullNodeFor harus tahu agar flatten "All Files" tidak
+        // anggap penuh (dan memotong senyap).
+        if (tree && tree._capped) node._capped = true;
+        cacheSet(base, node);
+        return makeSlice(node);
+      }
     }
   }
   return null;
@@ -278,7 +290,8 @@ ipcMain.handle('scan', async (_evt, root, opts) => {
   const base = root || process.env.SYSTEMDRIVE || 'C:\\';
   // `full` (dari expand subfolder) minta tree penuh (limit=0) — tidak di-cap,
   // agar data >2000 anak tetap tampil. Root scan default: slice capped cepat.
-  const full = !!(opts && opts.full);
+  // Normalisasi ketat: hanya boolean `true` dianggap full (cegah truthy sembarang).
+  const full = !!(opts && opts.full === true);
   // Validasi: hanya jalur drive lokal (cegah UNC/SSRF & path di luar drive).
   if (!/^[A-Za-z]:([\\\/]|$)/.test(base)) return { name: base, path: base, size: 0, alloc: 0, dir: true, children: [], error: 'invalid_root' };
   const fromCache = full ? null : sliceFromCache(base);
@@ -444,24 +457,33 @@ async function fullNodeFor(base) {
   return null;
 }
 
+// In-flight per base: deduplikasi `filesEntry` paralel (cegah double full-query
+// + flatten + double build bySize/byAlloc untuk base sama).
+const filesInFlight = new Map();
 async function filesEntry(base) {
   base = normDrive(base);
   let e = filesCache.get(base);
   if (e) { filesCache.delete(base); filesCache.set(base, e); return e; } // sentuh -> LRU
-  const node = await fullNodeFor(base);
-  const files = [];
-  if (node) flattenFiles(node, files, null);
-  // Pre-sort SEKALI (size & alloc) saat cache dibangun, agar tiap panggilan
-  // paginasi tinggal slice tanpa re-sort O(n log n) per halaman.
-  const bySize = files.slice().sort((a, b) => b.size - a.size);
-  const byAlloc = files.slice().sort((a, b) => (b.alloc ?? b.size) - (a.alloc ?? a.size));
-  e = { total: files.length, bySize, byAlloc };
-  filesCache.set(base, e);
-  if (filesCache.size > FILES_CACHE_MAX) {
-    const oldest = filesCache.keys().next().value;
-    if (oldest !== undefined) filesCache.delete(oldest);
-  }
-  return e;
+  if (filesInFlight.has(base)) return filesInFlight.get(base);
+  const p = (async () => {
+    const node = await fullNodeFor(base);
+    const files = [];
+    if (node) flattenFiles(node, files, null);
+    // Pre-sort SEKALI (size & alloc) saat cache dibangun, agar tiap panggilan
+    // paginasi tinggal slice tanpa re-sort O(n log n) per halaman.
+    const bySize = files.slice().sort((a, b) => b.size - a.size);
+    const byAlloc = files.slice().sort((a, b) => (b.alloc ?? b.size) - (a.alloc ?? a.size));
+    e = { total: files.length, bySize, byAlloc };
+    filesCache.set(base, e);
+    if (filesCache.size > FILES_CACHE_MAX) {
+      const oldest = filesCache.keys().next().value;
+      if (oldest !== undefined) filesCache.delete(oldest);
+    }
+    return e;
+  })();
+  filesInFlight.set(base, p);
+  p.finally(() => filesInFlight.delete(base));
+  return p;
 }
 
 ipcMain.handle('files-all', async (evt, root, offset, limit, q, metric) => {
@@ -471,7 +493,7 @@ ipcMain.handle('files-all', async (evt, root, offset, limit, q, metric) => {
   const e = await filesEntry(base);
   const byAlloc = metric === 'alloc';
   let all = byAlloc ? e.byAlloc : e.bySize;
-  const qq = (typeof q === 'string' ? q : '').trim().toLowerCase();
+  const qq = (typeof q === 'string' ? q : '').trim().toLowerCase().slice(0, 256);
   if (qq) {
     const toks = qq.split(/\s+/).filter(Boolean);
     if (toks.length) {

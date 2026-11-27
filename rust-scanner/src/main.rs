@@ -97,9 +97,10 @@ fn parse_record(buf: &[u8], frn: u64) -> Option<Node> {
                 if nlen > 0 && vb + 0x42 + nlen * 2 <= buf.len() {
                     let s = utf16(&buf[vb + 0x42..vb + 0x42 + nlen * 2]);
                     if !s.is_empty() {
-                        // preferensi: ns 2 (Win32+DOS) diutamakan; jika belum ada
-                        // nama, ambil apa pun (hindari nama DOS pendek menimpa panjang)
-                        if nspace == 2 || name.is_none() { name = Some(s); }
+                        // Prioritas: nama PANJANG (nspace 1/3) diutamakan; alias DOS
+                        // pendek (nspace 2) hanya dipakai bila belum ada nama sama
+                        // sekali. (Sebelumnya ns 2 menimpa nama panjang.)
+                        if nspace != 2 || name.is_none() { name = Some(s); }
                     }
                 }
             }
@@ -176,20 +177,23 @@ fn build_sorted_children(by_parent: &HashMap<u64, Vec<usize>>, nodes: &[Node],
 
 fn emit_children(p: u64, sorted: &HashMap<u64, Vec<usize>>, nodes: &[Node],
                 mem: &HashMap<u64, (u64, u64)>, out: &mut String, depth: usize,
-                limit: usize) {
+                limit: usize, budget: &mut usize) {
     if depth > 128 { TRUNCATED.store(true, Ordering::Relaxed); return; }
     if let Some(ids) = sorted.get(&p) {
         let count = if limit == 0 { ids.len() } else { ids.len().min(limit) };
         if count < ids.len() { TRUNCATED_LIMIT.store(true, Ordering::Relaxed); }
         for (i, &idx) in ids.iter().take(count).enumerate() {
-            if out.len() >= MAX_RESP_BYTES {
+            // Enforce budget ketat: cek SEBELUM tulis header anak (bukan hanya
+            // antar-saudara) agar satu subtree penuh tidak melewati 64MB.
+            if *budget == 0 {
                 TRUNCATED.store(true, Ordering::Relaxed);
                 break;
             }
-            if i > 0 { out.push(','); }
+            if i > 0 { out.push(','); *budget = budget.saturating_sub(1); }
             let n = &nodes[idx];
             out.push_str("{\"name\":\"");
             esc(&n.name, out);
+            *budget = budget.saturating_sub(8);
             out.push_str("\",\"size\":");
             if n.is_dir {
                 let (s, a) = mem.get(&n.frn).copied().unwrap_or((0, 0));
@@ -197,7 +201,7 @@ fn emit_children(p: u64, sorted: &HashMap<u64, Vec<usize>>, nodes: &[Node],
                 out.push_str(",\"alloc\":");
                 out.push_str(&a.to_string());
                 out.push_str(",\"children\":[");
-                emit_children(n.frn, sorted, nodes, mem, out, depth + 1, limit);
+                emit_children(n.frn, sorted, nodes, mem, out, depth + 1, limit, budget);
                 out.push_str("]}");
             } else {
                 // file: tanpa kunci children (sama dgn backend Node) agar renderer
@@ -207,6 +211,7 @@ fn emit_children(p: u64, sorted: &HashMap<u64, Vec<usize>>, nodes: &[Node],
                 out.push_str(&n.alloc.to_string());
                 out.push_str("}");
             }
+            if out.len() >= MAX_RESP_BYTES { *budget = 0; }
         }
     }
 }
@@ -238,6 +243,8 @@ fn find_node_by_path(root_frn: u64, filter: &str, by_parent: &HashMap<u64, Vec<u
 fn emit_root_node(frn: u64, name: &str, path_label: &str,
                   sorted: &HashMap<u64, Vec<usize>>, nodes: &[Node],
                   mem: &HashMap<u64, (u64, u64)>, out: &mut String, limit: usize) {
+    // Budget respon seluruh subtree (anti-OOM ketat).
+    let mut budget = MAX_RESP_BYTES;
     // Prefer total subtree (mem). Untuk file (bukan folder), pakai ukuran node sendiri.
     let (mut s, mut a) = mem.get(&frn).copied().unwrap_or((0, 0));
     if let Some(n) = nodes.iter().find(|n| n.frn == frn) {
@@ -252,7 +259,7 @@ fn emit_root_node(frn: u64, name: &str, path_label: &str,
     out.push_str(",\"alloc\":");
     out.push_str(&a.to_string());
     out.push_str(",\"children\":[");
-    emit_children(frn, sorted, nodes, mem, out, 0, limit);
+    emit_children(frn, sorted, nodes, mem, out, 0, limit, &mut budget);
     out.push_str("]");
     // Note: lebih dari satu penyebab -> gabung dgn koma.
     let mut notes = Vec::new();
@@ -454,6 +461,9 @@ fn run_serve(arg: &str) -> i32 {
     let mut seen: HashMap<u64, bool> = HashMap::new();
     calc(5, &vol.by_parent, &vol.nodes, &mut mem, &mut seen, 0);
     let sorted = build_sorted_children(&vol.by_parent, &vol.nodes, &mem);
+    // Peta frn -> idx: gantikan O(n) `position()` per query dgn O(1).
+    let frn_idx: HashMap<u64, usize> = vol.nodes.iter().enumerate()
+        .map(|(i, n)| (n.frn, i)).collect();
 
     let stdout = std::io::stdout();
     let mut w = std::io::BufWriter::new(stdout.lock());
@@ -471,19 +481,15 @@ fn run_serve(arg: &str) -> i32 {
         if line.is_empty() || line.eq_ignore_ascii_case("quit") || line.eq_ignore_ascii_case("exit") { break; }
         TRUNCATED.store(false, Ordering::Relaxed);
         TRUNCATED_LIMIT.store(false, Ordering::Relaxed);
-        // Format: "<path> [limit]" — limit opsional (0 = tanpa batas) membatasi
-        // jumlah anak per level yg di-emit (slice cepat utk quest awal).
-        // PENTING: parse limit dari KANAN, hanya jika token terakhir numerik, agar
-        // path ber-spasi ("D:\My Documents") tidak terpotong di spasi pertama.
-        let (path, limit): (String, usize) = match line.rsplit_once(char::is_whitespace) {
-            Some((p, l)) => match l.trim().parse::<usize>() {
-                Ok(n) => (p.to_string(), n),
-                Err(_) => (line.clone(), 0), // token terakhir bukan angka -> seluruh baris = path
-            },
+        // Format: "<path>\t<limit>" — tab pemisah (tab DILARANG di nama berkas
+        // NTFS, jadi tidak ambigu walau path ber-spasi / berakhiran angka).
+        // `limit` opsional; 0 = tanpa batas.
+        let (path, limit): (String, usize) = match line.split_once('\t') {
+            Some((p, l)) => (p.trim().to_string(), l.trim().parse().unwrap_or(0)),
             None => (line.clone(), 0),
         };
         let root_frn = if path == "-" { 5 } else {
-            match find_node_by_path(5, path, &vol.by_parent, &vol.nodes) {
+            match find_node_by_path(5, &path, &vol.by_parent, &vol.nodes) {
                 Some(f) => f,
                 None => {
                     out.clear();
@@ -500,7 +506,7 @@ fn run_serve(arg: &str) -> i32 {
             let name_label = if device_mode { format!("{}:", drive.to_ascii_uppercase()) } else { arg.to_string() };
             let path_label = name_label.clone();
             emit_root_node(5, &name_label, &path_label, &sorted, &vol.nodes, &mem, &mut out, limit);
-        } else if let Some(idx) = vol.nodes.iter().position(|n| n.frn == root_frn) {
+        } else if let Some(&idx) = frn_idx.get(&root_frn) {
             let n = &vol.nodes[idx];
             let nm = n.name.clone();
             let pl = path.replace('/', "\\");

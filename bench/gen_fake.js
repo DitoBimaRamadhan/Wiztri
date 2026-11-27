@@ -109,6 +109,12 @@ for (let i = 0; i < N; i++) {
   chunk.set(rec, cOff); cOff += REC;
   if (cOff + REC > chunk.length) flush();
 }
+// Tambah satu file bernama BER-SPASI (frn 6+N) utk uji protokol path ber-spasi.
+{
+  const rec = fileRecord(6 + N, 0x0001, 5, 512, 500, 'my file with spaces.bin');
+  chunk.set(rec, cOff); cOff += REC;
+}
+flush();
 flush();
 fs.closeSync(fd);
 console.log('wrote', out, 'records=' + N, 'bytes=' + off);

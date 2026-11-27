@@ -50,6 +50,14 @@ const r = framedReader(child);
 const vol = JSON.parse(await r.q('-'));
 check('akar volume: JSON valid', vol && !vol.error);
 check('akar volume: ada children', Array.isArray(vol.children) && vol.children.length > 0);
+
+// Protokol limit: separator TAB (bukan spasi) — path ber-spasi tidak ambigu.
+// Volume kecil ini 14 record -> limit 1 memotong anak jadi ≤1 + note.
+const capped = JSON.parse(await r.q('-\t1'));
+check('limit tab: children ≤1', Array.isArray(capped.children) && capped.children.length <= 1);
+check('limit tab: ada note truncation', typeof capped.note === 'string' && capped.note.length > 0);
+const cappedSpace = JSON.parse(await r.q('- 1'));
+check('limit spasi: seluruh baris jadi path (bukan root) → error', cappedSpace && cappedSpace.error === 'path_not_found');
 const a = vol.children.find((c) => c.name === 'a.txt');
 check('akar volume: a.txt size=1000', a && a.size === 1000);
 const sub = vol.children.find((c) => c.name === 'sub');
