@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.4 — 2026-11-27
+Perbaikan audit ronde 2 (5 agent paralel).
+### Rust scanner
+- **Protokol serve pakai delimiter TAB** — `"<path>\t<limit>"`; tab dilarang di nama NTFS sehingga path ber-spasi / berakhiran angka tidak ambigu lagi (sebelumnya `"D:\My Documents 2024"` salah-potong jadi limit).
+- **Prioritas nama panjang** — `parse_record` kini mengutamakan $FILE_NAME namespace 1/3 (nama panjang), bukan alias DOS 8.3 (nspace 2) yang lebih dulu muncul.
+- **Peta `frn→idx` sekali** — gantikan `O(n)` `position()` per query, `O(1)`.
+- **Budget 64MB ketat** — `emit_children` membawa parameter budget (dikurangi per node), bukan cek antar-saudara; batas tidak lagi overshoot satu subtree penuh.
+### main.js
+- **`serverQuery` clearTimeout** — timer watchdog di-clear saat resolve; cegah server MFT persisten dibunuh oleh timeout palsu ~30-120s setelah query sukses. `isFull` dieksplisitkan (bukan regex).
+- **`filesEntry` dedup in-flight** — panggilan `files-all` paralel per base tidak lagi double full-query + flatten + sort.
+- **Propagasi `_capped`** — subtree dari tree MFT capped sekarang diberi penanda; "All Files" tidak lagi menganggapnya lengkap dan memotong senyap.
+- **Normalisasi `full === true`** + batas panjang filter `q` 256.
+### Desain (dari commit e37478d)
+- Token palet bernama (`--accent-amber/teal/blue` + `--danger`), hapus label all-caps di tabel/pill engine, latar kisi "peta disk" pada treemap.
+### Test
+- `serve.spec` uji protokol limit tab + path ber-spasi; `bench/gen_fake` tambah file bernama ber-spasi.
+
 ## 0.3.3 — 2026-11-27
 ### Kecepatan scan (target ≤ 3 detik)
 - **Parse MFT paralel (Rust)** — `load_vol` membagi chunk $MFT ke semua core (`std::thread::scope`), tanpa dependency baru. 500k record: 3,5s → 1,9s.
